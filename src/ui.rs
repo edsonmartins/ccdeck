@@ -741,6 +741,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     if sel_status.is_some() {
         keys.push(("D", "diff"));
+        keys.push(("L", "linha do tempo"));
     }
     for (key, label) in keys.into_iter().chain([
         ("n", "nova sessão"),
@@ -801,8 +802,67 @@ fn draw_modal(f: &mut Frame, app: &App) {
     let area = f.area();
     match &app.modal {
         Modal::None | Modal::Filter => {}
+        Modal::Timeline {
+            name,
+            entries,
+            scroll,
+        } => {
+            use crate::timeline::Kind;
+            let r = centered(area, 110, area.height.saturating_sub(4));
+            f.render_widget(Clear, r);
+            let block = modal_block(format!("Linha do tempo · {name}"), accent()).title_bottom(
+                Line::styled(
+                    " j/k rolar · Esc fecha · horários locais ",
+                    Style::new().fg(muted()),
+                )
+                .right_aligned(),
+            );
+            let inner = block.inner(r);
+            f.render_widget(block, r);
+            let lines: Vec<Line> = entries
+                .iter()
+                .skip(*scroll)
+                .take(inner.height as usize)
+                .map(|e| {
+                    let when =
+                        e.at.with_timezone(&chrono::Local)
+                            .format("%d/%m %H:%M:%S  ")
+                            .to_string();
+                    let mut spans = vec![Span::styled(when, Style::new().fg(muted()))];
+                    match &e.kind {
+                        Kind::State(st, dur) => {
+                            spans.push(Span::styled(
+                                format!("{} {:<14}", st.icon(), st.short()),
+                                Style::new().fg(status_color(*st)),
+                            ));
+                            spans.push(Span::styled(
+                                format!("{:<12}", dur.map(fmt_secs).unwrap_or_default()),
+                                Style::new().fg(muted()),
+                            ));
+                            spans.push(Span::styled(e.text.clone(), Style::new().fg(fg())));
+                        }
+                        Kind::Action => {
+                            spans.push(Span::styled(
+                                format!("{:<28}", "⇢ ação do ccdeck"),
+                                Style::new().fg(accent()).bold(),
+                            ));
+                            spans.push(Span::styled(e.text.clone(), Style::new().fg(accent())));
+                        }
+                        Kind::Compaction => {
+                            spans.push(Span::styled(
+                                format!("{:<28}", "⟲ contexto"),
+                                Style::new().fg(status_color(Status::Approval)).bold(),
+                            ));
+                            spans.push(Span::styled(e.text.clone(), Style::new().fg(fg())));
+                        }
+                    }
+                    Line::from(spans)
+                })
+                .collect();
+            f.render_widget(Paragraph::new(lines), inner);
+        }
         Modal::Help => {
-            let r = centered(area, 66, 22);
+            let r = centered(area, 66, 23);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -812,6 +872,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("y / x", "aprovar / recusar o pedido pendente"),
                 ("m", "responder sem entrar na sessão"),
                 ("D", "diff completo da sessão"),
+                ("L", "linha do tempo da sessão"),
                 ("n / N", "nova sessão / novo projeto"),
                 ("a", "alternar visão Atenção"),
                 ("Tab", "Projetos → Atenção → Resumo"),
@@ -1187,6 +1248,16 @@ fn context_line(app: &App, sid: &str) -> Option<(String, bool)> {
         n => out.0.push_str(&format!(" · {n} compactações")),
     }
     Some(out)
+}
+
+/// `45 s`, `12 min 05 s`, `3 h 12 min`.
+fn fmt_secs(d: chrono::Duration) -> String {
+    let s = d.num_seconds();
+    match s {
+        ..60 => format!("{s} s"),
+        60..3600 => format!("{} min {:02} s", s / 60, s % 60),
+        _ => fmt_dur(d),
+    }
 }
 
 /// `1M`, `200k`.
@@ -1572,6 +1643,8 @@ mod tests {
         };
         assert_eq!(fmt_usd(&c), "US$ 3,40 + ?");
         assert_eq!(fmt_window(1_000_000), "1M");
+        assert_eq!(fmt_secs(chrono::Duration::seconds(82)), "1 min 22 s");
+        assert_eq!(fmt_secs(chrono::Duration::seconds(9)), "9 s");
         assert_eq!(fmt_window(200_000), "200k");
     }
 }

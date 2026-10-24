@@ -38,6 +38,7 @@ ccdeck            # abre a TUI
 - **Responder sem entrar**: o painel mostra o pedido de permissão pendente e a última resposta do Claude; `y`/`x` respondem o pedido e `m` envia uma resposta. O `y` só funciona se o pedido estiver na tela há pelo menos 600 ms e ainda for o mesmo.
 - **Alterações e colisões**: cada sessão mostra os arquivos que mudou desde a base; se duas sessões do mesmo projeto mexem no mesmo arquivo, aparece `⚠`.
 - **Resumo de uso** (`Tab` até a aba Resumo): tokens, custo equivalente em API, taxa de cache, tempo que as sessões ficaram esperando você, atividade recente e arquivos modificados, por período (`p`: hoje / 7 / 30 dias). Lido dos transcripts locais do Claude Code (inclui subagentes); nada sai da máquina. Para quem usa assinatura, `"cost_display": "hidden"` esconde o custo; a tabela `prices` do `config.json` pode ser editada.
+- **Contexto e linha do tempo**: o painel mostra quanto da janela de contexto a sessão já usa e quantas vezes compactou (`context_windows` no `config.json`, padrão 1M); `L` abre a linha do tempo da sessão.
 - **Notificação**: quando uma sessão passa a esperar aprovação, termina o turno ou dá erro, você recebe notificação de desktop (`osascript`/`notify-send`) e um sino no terminal.
 
 ## Atalhos
@@ -48,6 +49,7 @@ ccdeck            # abre a TUI
 | `y` / `x` | aprovar / recusar o pedido pendente sem entrar |
 | `m` | responder à sessão sem entrar |
 | `D` | diff completo da sessão (`diff_command`) |
+| `L` | linha do tempo da sessão (eventos, ações do ccdeck, compactações) |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
 | `Enter` | entrar na sessão (retoma se suspensa) |
 | `Ctrl-q` | dentro da sessão: voltar ao ccdeck |

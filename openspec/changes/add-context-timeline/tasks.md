@@ -9,8 +9,8 @@
 
 ## 2. UI
 - [x] 2.1 Linha de contexto no painel (destaque acima de 85%)
-- [ ] 2.2 `timeline.rs` + modal `L`
+- [x] 2.2 `timeline.rs` + modal `L`
 
 ## 3. Verificação
-- [ ] 3.1 Testes de contexto, compactação e montagem da linha do tempo
-- [ ] 3.2 Fluxo real
+- [x] 3.1 Testes de contexto, compactação e montagem da linha do tempo
+- [x] 3.2 Fluxo real

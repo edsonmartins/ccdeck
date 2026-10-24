@@ -12,6 +12,7 @@ mod paths;
 mod project;
 mod store;
 mod summary;
+mod timeline;
 mod tmux;
 mod transcript;
 mod ui;

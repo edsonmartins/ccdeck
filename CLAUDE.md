@@ -21,6 +21,7 @@ Leia antes de qualquer mudança: `CONSTITUTION.md` (invariantes), `docs/SPEC.md`
 - `usage.rs` — índice incremental de tokens por transcript (+ subagentes) e custo (ADR-0010).
 - `events.rs` — histórico de eventos por sessão e tempo em cada estado.
 - `summary.rs` — agregados da aba Resumo (funções puras).
+- `timeline.rs` — linha do tempo da sessão (eventos + `actions.log` + compactações).
 - `store.rs` (migrações de schema), `paths.rs`, `model.rs`, `input.rs`, `notify.rs`.
 
 ## Changes

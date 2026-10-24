@@ -73,12 +73,30 @@ pub enum Modal {
     None,
     NewSession(Box<SessionForm>),
     NewProject(TextInput),
-    Delete { session: String, dirty: usize },
-    Notes { session: String, text: TextInput },
-    Rename { session: String, text: TextInput },
-    Reply { session: String, text: TextInput },
+    Delete {
+        session: String,
+        dirty: usize,
+    },
+    Notes {
+        session: String,
+        text: TextInput,
+    },
+    Rename {
+        session: String,
+        text: TextInput,
+    },
+    Reply {
+        session: String,
+        text: TextInput,
+    },
     Filter,
     Help,
+    /// Linha do tempo da sessão (ADR-0012), montada ao abrir.
+    Timeline {
+        name: String,
+        entries: Vec<crate::timeline::Entry>,
+        scroll: usize,
+    },
 }
 
 pub struct Flash {
@@ -620,6 +638,36 @@ impl App {
             }
             Err(e) => self.error(format!("falha ao enviar teclas: {e:#}")),
         }
+    }
+
+    /// `L`: eventos, ações e compactações da sessão (ADR-0012).
+    pub fn open_timeline(&mut self) {
+        let Some(s) = self.selected_session().cloned() else {
+            return;
+        };
+        let events = crate::events::load(&self.paths, &s.id);
+        let actions = crate::timeline::load_actions(&self.paths, &s.id);
+        let comps = self
+            .usage
+            .insight
+            .get(&s.id)
+            .map(|i| i.compactions.clone())
+            .unwrap_or_default();
+        let end = if self.alive.contains(&s.tmux_name()) {
+            Utc::now()
+        } else {
+            events.last().map(|e| e.at).unwrap_or_else(Utc::now)
+        };
+        let entries = crate::timeline::build(&events, &actions, &comps, end);
+        if entries.is_empty() {
+            self.info("sem eventos registrados ainda para esta sessão");
+            return;
+        }
+        self.modal = Modal::Timeline {
+            name: s.name,
+            entries,
+            scroll: 0,
+        };
     }
 
     pub fn open_reply(&mut self) {
@@ -1179,6 +1227,32 @@ impl App {
                 self.handle_normal(key);
                 return;
             }
+            Modal::Timeline {
+                name,
+                entries,
+                mut scroll,
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('L') | KeyCode::Enter => {
+                    Modal::None
+                }
+                code => {
+                    let max = entries.len().saturating_sub(1);
+                    scroll = match code {
+                        KeyCode::Down | KeyCode::Char('j') => (scroll + 1).min(max),
+                        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+                        KeyCode::PageDown | KeyCode::Char(' ') => (scroll + 10).min(max),
+                        KeyCode::PageUp => scroll.saturating_sub(10),
+                        KeyCode::Home | KeyCode::Char('g') => 0,
+                        KeyCode::End | KeyCode::Char('G') => max,
+                        _ => scroll,
+                    };
+                    Modal::Timeline {
+                        name,
+                        entries,
+                        scroll,
+                    }
+                }
+            },
             Modal::Help => match key.code {
                 KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Enter => {
                     Modal::None
@@ -1358,6 +1432,7 @@ impl App {
             KeyCode::Char('x') => self.answer_permission(false),
             KeyCode::Char('m') => self.open_reply(),
             KeyCode::Char('D') => self.open_diff(),
+            KeyCode::Char('L') => self.open_timeline(),
             KeyCode::Char('/') => self.modal = Modal::Filter,
             KeyCode::Char('?') => self.modal = Modal::Help,
             KeyCode::Esc => {
