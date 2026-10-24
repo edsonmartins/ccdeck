@@ -109,7 +109,18 @@ pub fn merge(
     now: chrono::DateTime<Utc>,
 ) -> StatusRecord {
     let str_field = |k: &str| input.get(k).and_then(Value::as_str).map(str::to_string);
-    let this_tool = tool_call(input, now);
+    let this_tool = tool_call(input, now).map(|mut t| {
+        // O PermissionRequest real não traz `tool_use_id`; herda o do
+        // PreToolUse da mesma chamada (validacao-v0.2.md).
+        if input.get("tool_use_id").is_none()
+            && let Some(prev_tool) = prev.and_then(|p| p.last_tool.as_ref())
+            && prev_tool.tool == t.tool
+            && prev_tool.summary == t.summary
+        {
+            t.id = prev_tool.id.clone();
+        }
+        t
+    });
     let last_tool = this_tool
         .clone()
         .or_else(|| prev.and_then(|p| p.last_tool.clone()));
@@ -290,8 +301,10 @@ mod tests {
         assert!(get().pending.is_none());
 
         ev(
-            json!({"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_use_id":"tu1",
-                  "tool_input":{"command":"./mvnw flyway:migrate"}}),
+            // Formato real (Claude Code 2.1.310): sem `tool_use_id`.
+            json!({"hook_event_name":"PermissionRequest","tool_name":"Bash",
+                  "tool_input":{"command":"./mvnw flyway:migrate","description":"migra"},
+                  "permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}]}),
         );
         let r = get();
         assert_eq!(r.status, Status::Approval);
@@ -316,6 +329,32 @@ mod tests {
         ev(json!({"hook_event_name":"UserPromptSubmit"}));
         assert_eq!(get().last_message.as_deref(), Some("Pronto. Abro o PR?"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn permission_request_sem_id_de_outra_chamada() {
+        let now = Utc::now();
+        let prev = merge(
+            None,
+            &json!({"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"tu1",
+                    "tool_input":{"command":"ls"}}),
+            Status::Working,
+            "PreToolUse".into(),
+            None,
+            now,
+        );
+        let r = merge(
+            Some(&prev),
+            &json!({"hook_event_name":"PermissionRequest","tool_name":"Bash",
+                    "tool_input":{"command":"rm -rf build"}}),
+            Status::Approval,
+            "PermissionRequest".into(),
+            None,
+            now,
+        );
+        let p = r.pending.unwrap();
+        assert_eq!(p.summary, "rm -rf build");
+        assert_ne!(p.id, "tu1");
     }
 
     #[test]
