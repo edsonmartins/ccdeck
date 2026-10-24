@@ -50,6 +50,11 @@ impl Paths {
         self.state_dir.join("hooks.json")
     }
 
+    /// Largura escolhida para a barra do modo integrado.
+    pub fn sidebar_file(&self) -> PathBuf {
+        self.state_dir.join("sidebar_cols")
+    }
+
     pub fn tmux_conf(&self) -> PathBuf {
         self.state_dir.join("tmux.conf")
     }

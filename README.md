@@ -65,6 +65,7 @@ ccdeck            # abre a árvore + a sessão ao lado (Ctrl-q volta à árvore 
 | `B` | broadcast: mesmo texto para várias sessões em Aguardando você (com confirmação) |
 | `E` | entrega: commit, push e PR (`gh`), cada um com confirmação |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
+| `<` / `>` | estreitar / alargar a barra (ou arraste a divisória com o mouse; a largura fica guardada) |
 | clique / roda | selecionar sessão ou projeto na árvore; abas e botões `+ Sessão`/`+ Projeto`/`? Ajuda` |
 | `Enter` | foco na sessão à direita (retoma se suspensa) |
 | `Ctrl-q` | na sessão: voltar à árvore; na árvore: desconectar |

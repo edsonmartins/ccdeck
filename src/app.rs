@@ -1058,6 +1058,15 @@ impl App {
     /// Liga o modo integrado; `sidebar` é o painel desta TUI.
     pub fn enable_ui(&mut self, sidebar: String) {
         self.tmux.style_deck();
+        // Largura da barra: a última escolhida (arraste ou `<`/`>`) ou o padrão.
+        if let Some(cols) = std::fs::read_to_string(self.paths.sidebar_file())
+            .ok()
+            .and_then(|v| v.trim().parse::<u16>().ok())
+        {
+            self.tmux
+                .set_ui_option("@ccdeck_sidebar_cols", Some(&cols.to_string()));
+        }
+        self.tmux.resize_sidebar(&sidebar);
         let shown = self.tmux.ui_option("@ccdeck_shown");
         self.ui = Some(UiMode {
             sidebar,
@@ -1152,6 +1161,49 @@ impl App {
     pub fn leave_ui(&mut self) {
         let _ = self.unshow();
         self.tmux.kill_ui();
+    }
+
+    /// A barra mudou de largura (divisória arrastada, `<`/`>` ou terminal).
+    pub fn sidebar_resized(&mut self, width: u16) {
+        let Some(sidebar) = self.ui.as_ref().map(|u| u.sidebar.clone()) else {
+            return;
+        };
+        if self.tmux.zoomed(&sidebar) {
+            return;
+        }
+        if width < crate::tmux::SIDEBAR_MIN {
+            self.tmux
+                .set_sidebar_width(&sidebar, crate::tmux::SIDEBAR_MIN);
+            return;
+        }
+        self.save_sidebar_cols(width);
+    }
+
+    fn save_sidebar_cols(&mut self, cols: u16) {
+        let cols = cols.max(crate::tmux::SIDEBAR_MIN);
+        if self.tmux.sidebar_cols() == cols {
+            return;
+        }
+        self.tmux
+            .set_ui_option("@ccdeck_sidebar_cols", Some(&cols.to_string()));
+        let _ = std::fs::write(self.paths.sidebar_file(), cols.to_string());
+    }
+
+    /// `<` / `>`: estreita ou alarga a barra.
+    fn nudge_sidebar(&mut self, delta: i32) {
+        let Some(sidebar) = self.ui.as_ref().map(|u| u.sidebar.clone()) else {
+            return;
+        };
+        let max = self
+            .tmux
+            .deck_width()
+            .map(|w| w.saturating_sub(crate::tmux::SESSION_MIN))
+            .unwrap_or(u16::MAX)
+            .max(crate::tmux::SIDEBAR_MIN);
+        let cur = self.tmux.sidebar_cols() as i32;
+        let cols = (cur + delta).clamp(crate::tmux::SIDEBAR_MIN as i32, max as i32) as u16;
+        self.tmux.set_sidebar_width(&sidebar, cols);
+        self.save_sidebar_cols(cols);
     }
 
     pub fn set_shell_zoom(&mut self, on: bool) {
@@ -2455,6 +2507,8 @@ impl App {
             KeyCode::Enter => self.enter(),
             KeyCode::Char('n') => self.open_new_session(),
             KeyCode::Char('N') => self.open_new_project(),
+            KeyCode::Char('<') => self.nudge_sidebar(-4),
+            KeyCode::Char('>') => self.nudge_sidebar(4),
             KeyCode::Char('a') => {
                 self.view = if self.view == View::Attention {
                     View::Tree

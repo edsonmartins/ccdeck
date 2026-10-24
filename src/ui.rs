@@ -1316,7 +1316,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
         }
         Modal::Details => {}
         Modal::Help => {
-            let r = centered(area, 70, 31);
+            let r = centered(area, 70, 32);
             f.render_widget(Clear, r);
             let rows = [
                 (
@@ -1325,6 +1325,10 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ),
                 ("j/k ↑/↓", "navegar"),
                 ("h/l ←/→", "recolher / expandir projeto"),
+                (
+                    "< / >",
+                    "estreitar / alargar a barra (ou arraste a divisória)",
+                ),
                 ("Enter", "digitar na sessão (retoma se suspensa)"),
                 ("Ctrl-q", "na sessão: volta à árvore; na árvore: desconecta"),
                 ("y / x", "aprovar / recusar o pedido pendente"),

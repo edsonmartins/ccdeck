@@ -21,8 +21,12 @@ pub const SETUP_WINDOW: &str = "setup";
 pub const VERIFY_WINDOW: &str = "verify";
 /// Sessão do modo integrado (ADR-0018): barra lateral + painel da sessão.
 pub const UI_SESSION: &str = "ccdeck-ui";
-/// Largura da barra lateral no modo integrado.
-pub const SIDEBAR_COLS: &str = "46";
+/// Largura padrão e mínima da barra lateral no modo integrado; a escolhida
+/// pelo usuário (arrastando a divisória ou `<`/`>`) fica em `@ccdeck_sidebar_cols`.
+pub const SIDEBAR_DEFAULT: u16 = 46;
+pub const SIDEBAR_MIN: u16 = 30;
+/// Espaço mínimo que sobra para a sessão à direita.
+pub const SESSION_MIN: u16 = 40;
 const PLACEHOLDER_CMD: &str = "sh -c 'clear; printf \"\\n  ◂ selecione uma sessão na barra (clique ou j/k)\\n\"; exec tail -f /dev/null'";
 
 /// Painel do servidor do deck, com as marcas do ccdeck (ADR-0018).
@@ -263,7 +267,30 @@ impl Tmux {
     }
 
     pub fn resize_sidebar(&self, sidebar: &str) {
-        let _ = self.run(&["resize-pane", "-t", sidebar, "-x", SIDEBAR_COLS]);
+        self.set_sidebar_width(sidebar, self.sidebar_cols());
+    }
+
+    pub fn sidebar_cols(&self) -> u16 {
+        self.ui_option("@ccdeck_sidebar_cols")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(SIDEBAR_DEFAULT)
+    }
+
+    pub fn set_sidebar_width(&self, sidebar: &str, cols: u16) {
+        let _ = self.run(&["resize-pane", "-t", sidebar, "-x", &cols.to_string()]);
+    }
+
+    /// Largura da janela do modo integrado.
+    pub fn deck_width(&self) -> Option<u16> {
+        self.run(&[
+            "display-message",
+            "-p",
+            "-t",
+            "=ccdeck-ui:deck",
+            "#{window_width}",
+        ])
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
     }
 
     pub fn placeholder(&self) -> Option<String> {

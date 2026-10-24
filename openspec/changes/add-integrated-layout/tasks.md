@@ -13,4 +13,5 @@
 ## 2. Depois da aprovação
 - [x] 2.1 ADR-0018 aceito, CONSTITUTION ajustada, `ccdeck` abre no modo integrado
 - [x] 2.3 Foco visível (barra e borda do tmux), abas e botões `+ Sessão`/`+ Projeto`/`? Ajuda` clicáveis, legenda movida para a ajuda
+- [x] 2.4 Divisória redimensionável: arraste ou `<`/`>`, mínimo de 30 colunas, largura guardada em `state/sidebar_cols`
 - [ ] 2.2 Miniaturas das outras janelas da sessão (shell, servidor) embaixo

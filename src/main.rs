@@ -146,6 +146,7 @@ fn run_tui(paths: Paths, sidebar: String) -> Result<()> {
             if event::poll(Duration::from_millis(250))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                    Event::Resize(w, _) => app.sidebar_resized(w),
                     Event::FocusGained => app.focused = true,
                     Event::FocusLost => app.focused = false,
                     Event::Mouse(m) => match m.kind {
