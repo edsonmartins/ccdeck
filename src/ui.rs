@@ -962,7 +962,12 @@ fn draw_modal(f: &mut Frame, app: &App) {
             } else {
                 0
             };
-            let r = centered(area, 78, 15 + prep_h);
+            let starter_h = if form.starters.is_empty() {
+                0
+            } else {
+                2 + u16::from(form.current_starter().is_some_and(|s| s.warning.is_some()))
+            };
+            let r = centered(area, 96, 15 + prep_h + starter_h);
             f.render_widget(Clear, r);
             let foc = form.focused();
             let slug = crate::model::slugify(if form.name.value.trim().is_empty() {
@@ -994,6 +999,23 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 .collect::<Vec<_>>()
                 .join("  ");
             let mut lines = Vec::new();
+            if !form.starters.is_empty() {
+                let label = form
+                    .current_starter()
+                    .map(|s| s.label.clone())
+                    .unwrap_or_else(|| format!("(nenhum) — {} opções", form.starters.len()));
+                lines.extend(field_line(
+                    "Modelo (←/→: templates e changes do OpenSpec)",
+                    label,
+                    foc == Field::Starter,
+                ));
+                if let Some(w) = form.current_starter().and_then(|s| s.warning.clone()) {
+                    lines.push(Line::styled(
+                        format!("  {w}"),
+                        Style::new().fg(status_color(Status::Approval)),
+                    ));
+                }
+            }
             lines.extend(field_line(
                 "Nome",
                 form.name.with_cursor(foc == Field::Name),

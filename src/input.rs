@@ -86,6 +86,8 @@ impl TextInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
+    /// Modelo de sessão (ADR-0014); só aparece quando há opções.
+    Starter,
     Name,
     Base,
     Worktree,
@@ -93,13 +95,26 @@ pub enum Field {
     Prompt,
 }
 
-const FIELDS: [Field; 5] = [
+const FIELDS: [Field; 6] = [
+    Field::Starter,
     Field::Name,
     Field::Base,
     Field::Worktree,
     Field::Mode,
     Field::Prompt,
 ];
+
+/// Opção do campo Modelo: template do projeto ou change do OpenSpec.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Starter {
+    pub label: String,
+    /// Nome sugerido para a sessão.
+    pub name: String,
+    pub prompt: String,
+    /// Índice em `PERMISSION_MODES`.
+    pub mode: Option<usize>,
+    pub warning: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct SessionForm {
@@ -114,6 +129,9 @@ pub struct SessionForm {
     pub mode: usize,
     pub prompt: TextInput,
     pub focus: usize,
+    pub starters: Vec<Starter>,
+    /// 0 = nenhum; `i` = `starters[i - 1]`.
+    pub starter: usize,
 }
 
 pub enum FormOutcome {
@@ -123,8 +141,45 @@ pub enum FormOutcome {
 }
 
 impl SessionForm {
+    /// Campos visíveis, na ordem do Tab.
+    pub fn fields(&self) -> Vec<Field> {
+        FIELDS
+            .into_iter()
+            .filter(|f| *f != Field::Starter || !self.starters.is_empty())
+            .collect()
+    }
+
     pub fn focused(&self) -> Field {
-        FIELDS[self.focus]
+        let f = self.fields();
+        f[self.focus.min(f.len() - 1)]
+    }
+
+    pub fn current_starter(&self) -> Option<&Starter> {
+        self.starter
+            .checked_sub(1)
+            .and_then(|i| self.starters.get(i))
+    }
+
+    /// Troca o modelo. Só sobrescreve nome e prompt que o usuário não editou
+    /// (vazios ou iguais aos do modelo anterior).
+    fn select_starter(&mut self, next: usize) {
+        let prev = self.current_starter().cloned();
+        self.starter = next;
+        let new = self.current_starter().cloned();
+        let untouched = |v: &str, old: Option<&str>| v.trim().is_empty() || Some(v) == old;
+        if untouched(&self.name.value, prev.as_ref().map(|p| p.name.as_str())) {
+            self.name = TextInput::new(new.as_ref().map(|n| n.name.clone()).unwrap_or_default());
+        }
+        if untouched(&self.prompt.value, prev.as_ref().map(|p| p.prompt.as_str())) {
+            self.prompt =
+                TextInput::new(new.as_ref().map(|n| n.prompt.clone()).unwrap_or_default());
+        }
+        match new.as_ref().and_then(|n| n.mode) {
+            Some(m) => self.mode = m,
+            // O modo veio do modelo anterior e o usuário não mexeu: volta ao padrão.
+            None if prev.as_ref().and_then(|p| p.mode) == Some(self.mode) => self.mode = 0,
+            None => {}
+        }
     }
 
     pub fn mode(&self) -> &'static str {
@@ -135,11 +190,22 @@ impl SessionForm {
         match key.code {
             KeyCode::Esc => return FormOutcome::Cancel,
             KeyCode::Enter => return FormOutcome::Submit,
-            KeyCode::Tab | KeyCode::Down => self.focus = (self.focus + 1) % FIELDS.len(),
+            KeyCode::Tab | KeyCode::Down => self.focus = (self.focus + 1) % self.fields().len(),
             KeyCode::BackTab | KeyCode::Up => {
-                self.focus = (self.focus + FIELDS.len() - 1) % FIELDS.len()
+                let n = self.fields().len();
+                self.focus = (self.focus + n - 1) % n
             }
             _ => match self.focused() {
+                Field::Starter => {
+                    let n = self.starters.len() + 1;
+                    match key.code {
+                        KeyCode::Char(' ') | KeyCode::Right => {
+                            self.select_starter((self.starter + 1) % n)
+                        }
+                        KeyCode::Left => self.select_starter((self.starter + n - 1) % n),
+                        _ => {}
+                    }
+                }
                 Field::Name => {
                     self.name.handle(key);
                 }
@@ -180,6 +246,59 @@ mod tests {
 
     fn k(c: KeyCode) -> KeyEvent {
         KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    fn form(starters: Vec<Starter>) -> SessionForm {
+        SessionForm {
+            prep: vec![],
+            project_id: "p".into(),
+            project_name: "p".into(),
+            is_repo: true,
+            name: TextInput::new(""),
+            base: TextInput::new("main"),
+            worktree: true,
+            mode: 0,
+            prompt: TextInput::new(""),
+            focus: 0,
+            starters,
+            starter: 0,
+        }
+    }
+
+    #[test]
+    fn modelo_preenche_sem_apagar_o_que_o_usuario_digitou() {
+        let st = |name: &str, mode| Starter {
+            label: name.into(),
+            name: name.into(),
+            prompt: format!("prompt de {name}"),
+            mode,
+            warning: None,
+        };
+        let mut f = form(vec![st("add-x", None), st("revisar", Some(2))]);
+        assert_eq!(f.focused(), Field::Starter);
+        f.handle(k(KeyCode::Right));
+        assert_eq!(
+            (f.name.value.as_str(), f.prompt.value.as_str()),
+            ("add-x", "prompt de add-x")
+        );
+        f.handle(k(KeyCode::Right));
+        assert_eq!(f.name.value, "revisar");
+        assert_eq!(f.mode, 2, "template com modo");
+        // Do template com modo para o change sem modo: volta ao padrão.
+        f.handle(k(KeyCode::Left));
+        assert_eq!((f.name.value.as_str(), f.mode), ("add-x", 0));
+        f.handle(k(KeyCode::Right));
+        assert_eq!(f.mode, 2);
+        // O usuário edita o nome; trocar de modelo mantém o nome dele.
+        f.name = TextInput::new("meu-nome");
+        f.handle(k(KeyCode::Right));
+        assert_eq!(f.starter, 0);
+        assert_eq!(f.name.value, "meu-nome");
+        assert_eq!(f.prompt.value, "", "prompt não editado volta a vazio");
+        // Sem modelos o campo some e o foco começa no nome.
+        let f = form(vec![]);
+        assert_eq!(f.focused(), Field::Name);
+        assert_eq!(f.fields().len(), 5);
     }
 
     #[test]

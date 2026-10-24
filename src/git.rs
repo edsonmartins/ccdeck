@@ -35,6 +35,11 @@ pub fn current_branch(dir: &Path) -> Option<String> {
         .filter(|b| b != "HEAD")
 }
 
+/// Se `path` existe em `rev` (ex.: change do OpenSpec já commitado na base).
+pub fn exists_in_ref(repo: &Path, rev: &str, path: &str) -> bool {
+    git(repo, &["cat-file", "-e", &format!("{rev}:{path}")]).is_ok()
+}
+
 /// `<repo>.worktrees/<slug>` — irmão do repositório (ADR-0003).
 pub fn worktree_path(repo: &Path, slug: &str) -> PathBuf {
     let name = repo

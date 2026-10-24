@@ -17,8 +17,21 @@ pub struct ProjectConfig {
     pub setup: Option<String>,
     /// Comando de verificação rodado com `t` (ADR-0013).
     pub verify: Option<String>,
+    /// Modelos de prompt para novas sessões (ADR-0014).
+    pub templates: Vec<Template>,
+    /// Prompt para sessão a partir de change do OpenSpec; `{id}` e `{dir}`.
+    pub openspec_prompt: Option<String>,
     pub env: BTreeMap<String, String>,
     pub ports: Option<Ports>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Template {
+    pub name: String,
+    pub prompt: String,
+    /// Modo de permissão (`default`, `acceptEdits`, `plan`, `auto`).
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -118,6 +131,9 @@ pub const TEMPLATE: &str = r#"{
   "copy": [".env"],
   "setup": "",
   "verify": "",
+  "templates": [
+    { "name": "revisar", "prompt": "Revise as mudanças deste branch contra a base e aponte problemas antes de eu abrir o PR.", "mode": "plan" }
+  ],
   "env": {},
   "ports": { "base": 8080, "step": 10, "vars": ["PORT"] }
 }

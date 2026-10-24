@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::changes::{self, Job, Scanner};
 use crate::git::{self, FileChange};
 use crate::hook::{self, shell_quote};
-use crate::input::{FormOutcome, SessionForm, TextInput};
+use crate::input::{FormOutcome, SessionForm, Starter, TextInput};
 use crate::model::{
     Config, PERMISSION_MODES, Project, Session, State, Status, StatusRecord, short_id, slugify,
 };
@@ -1049,6 +1049,7 @@ impl App {
         let is_repo = git::repo_root(&p.path).is_some();
         let base = git::current_branch(&p.path).unwrap_or_else(|| "main".into());
         let prep = self.prep_preview(&p);
+        let starters = Self::starters(&p, is_repo, &base);
         self.modal = Modal::NewSession(Box::new(SessionForm {
             prep,
             project_id: p.id,
@@ -1060,7 +1061,49 @@ impl App {
             mode: 0,
             prompt: TextInput::new(""),
             focus: 0,
+            starters,
+            starter: 0,
         }));
+    }
+
+    /// Opções do campo Modelo: templates do `.ccdeck.json` e changes do OpenSpec (ADR-0014).
+    fn starters(p: &Project, is_repo: bool, base: &str) -> Vec<Starter> {
+        let cfg = ProjectConfig::load(&p.path).unwrap_or_default();
+        let mode_idx = |m: &str| PERMISSION_MODES.iter().position(|x| *x == m);
+        let mut out: Vec<Starter> = cfg
+            .templates
+            .iter()
+            .map(|t| Starter {
+                label: format!("modelo · {}", t.name),
+                name: t.name.clone(),
+                prompt: t.prompt.clone(),
+                mode: t.mode.as_deref().and_then(mode_idx),
+                warning: None,
+            })
+            .collect();
+        out.extend(crate::openspec::list(&p.path).into_iter().map(|c| {
+            let progress = if c.total > 0 {
+                format!(" ({}/{})", c.done, c.total)
+            } else {
+                String::new()
+            };
+            let warning = (is_repo
+                && !git::exists_in_ref(&p.path, base, &format!("{}/proposal.md", c.dir)))
+            .then(|| {
+                format!(
+                    "⚠ {} não está commitado em {base}: o worktree não terá os arquivos",
+                    c.dir
+                )
+            });
+            Starter {
+                label: format!("OpenSpec · {} — {}{progress}", c.id, c.title),
+                name: c.id.clone(),
+                prompt: c.prompt(cfg.openspec_prompt.as_deref()),
+                mode: None,
+                warning,
+            }
+        }));
+        out
     }
 
     fn used_slots(&self, project_id: &str) -> Vec<u32> {

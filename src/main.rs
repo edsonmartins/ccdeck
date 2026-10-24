@@ -8,6 +8,7 @@ mod hook;
 mod input;
 mod model;
 mod notify;
+mod openspec;
 mod paths;
 mod project;
 mod store;
