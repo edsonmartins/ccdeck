@@ -2,7 +2,7 @@
 
 ## 0. Validação
 - [x] 0.1 Conferir num transcript real os campos `message.id`, `message.model`, `message.usage.*` e `timestamp`
-- [ ] 0.2 Registrar exemplos anonimizados como fixtures de teste
+- [x] 0.2 Registrar exemplos anonimizados como fixtures de teste
 
 ## 1. Coleta
 - [ ] 1.1 `usage.rs`: leitura incremental por offset, dedupe por `message.id`, agregados por hora e modelo
