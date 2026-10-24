@@ -18,11 +18,21 @@ Com várias sessões em paralelo queremos ver, por sessão, projeto e período: 
 
 O formato do transcript não é um contrato público do Claude Code. O parser é defensivo: ignora linhas que não entende, nunca falha a TUI, e o primeiro passo da implementação é validar os campos num transcript real. O streaming grava várias linhas para a mesma mensagem: contamos cada `message.id` uma vez, usando a última linha.
 
+### Validação do formato (Claude Code 2.1.309/2.1.310, 2026-10-23)
+Feita em 89 transcripts principais e 501 de subagentes desta máquina, olhando só estrutura e números.
+- [confirmado] Linhas `type: "assistant"` trazem `timestamp` (ISO 8601 com `Z`), `message.id` (`msg_…`), `message.model`, `message.stop_reason` e `message.usage` com `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` e `cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`. Também trazem `usage.speed` (`standard`/`fast`) e `usage.inference_geo`.
+- [confirmado] Um `message.id` aparece em até 33 linhas (uma por bloco de conteúdo). No transcript principal o `usage` se repete; nos de subagente há linhas parciais de streaming (`stop_reason: null`, `output_tokens` parcial) seguidas da final. Em todos os 2.763 casos com valores diferentes, a última linha tem o maior `output_tokens` e o `input` não muda. Em 710 deles as linhas do mesmo id vêm **intercaladas** com outras mensagens. → o dedupe vale para o arquivo todo, inclusive entre leituras incrementais.
+- [confirmado] Linhas com `message.model = "<synthetic>"` (mensagens geradas pelo próprio Claude Code, como a de interrupção) têm uso zero e são ignoradas.
+- [confirmado] **Subagentes gravam em arquivos próprios**: `<dir do transcript>/<session_id>/subagents/agent-*.jsonl`. O transcript principal não tem as linhas deles (`isSidechain` é sempre `false` lá). O uso da sessão soma o principal e os subagentes.
+- [confirmado] O maior transcript tem 3,4 GB. Antes do parse JSON, a linha é filtrada por substring (`"type":"assistant"`).
+- [inferência] O `id` é único por chamada de API (o `requestId` é único por `message.id` em todos os casos vistos).
+
 ### Indexação incremental
-Para não reler transcripts grandes, `state/usage/<sid>.json` guarda o offset já lido e os agregados por hora (`tokens_in`, `tokens_out`, `cache_write`, `cache_read`, `messages`, por modelo). Cada varredura lê só o que cresceu. Roda na mesma thread de segundo plano das alterações.
+Para não reler transcripts grandes, `state/usage/<sid>.json` guarda, por arquivo (principal e cada subagente), o offset já lido, e os agregados por hora e modelo (`input`, `output`, `cache_write_5m`, `cache_write_1h`, `cache_read`, `messages`). Cada varredura lê só o que cresceu e para na última linha completa. Para o dedupe entre leituras, o índice guarda a contribuição das últimas mensagens de cada arquivo (as 256 mais recentes): quando chega uma linha nova de um id já contado, a contribuição antiga sai do agregado e a nova entra. O modo rápido entra como modelo `<id>+fast`. Roda numa thread de segundo plano.
 
 ### Custo
-- `config.json` ganha `prices`: preço por milhão de tokens (entrada, saída, escrita e leitura de cache) por prefixo de id de modelo. O padrão vem da página oficial de preços na data deste ADR e pode ser editado.
+- `config.json` ganha `prices`: preço por milhão de tokens (entrada, saída, escrita de cache 5 min, escrita de cache 1 h, leitura de cache) por prefixo de id de modelo; vence o prefixo mais longo. O padrão vem da página oficial (`platform.claude.com/docs/en/about-claude/pricing`, lida em 2026-10-23) e pode ser editado. O preço é por mensagem: o Haiku 5.5 tem faixa acima de 100 mil tokens de prompt (`long_context_over` + preços da faixa).
+- [inferência] O roteamento só-EUA (`inference_geo: "us"`, 1,1×) não entra no cálculo; nesta máquina todo uso é `global`.
 - O custo é exibido como **"equivalente em API"**. Para quem usa assinatura (Pro/Max), não é o valor pago; `cost_display` pode ser `"api"` (padrão) ou `"hidden"`.
 - Modelo sem preço configurado: custo mostrado como `?` e aviso no `ccdeck doctor`.
 

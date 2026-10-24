@@ -1,7 +1,7 @@
 # Tasks — add-usage-summary
 
 ## 0. Validação
-- [ ] 0.1 Conferir num transcript real os campos `message.id`, `message.model`, `message.usage.*` e `timestamp`
+- [x] 0.1 Conferir num transcript real os campos `message.id`, `message.model`, `message.usage.*` e `timestamp`
 - [ ] 0.2 Registrar exemplos anonimizados como fixtures de teste
 
 ## 1. Coleta
