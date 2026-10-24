@@ -86,7 +86,7 @@ bind -n C-q if-shell -F "#{&&:#{==:#{session_name},ccdeck-ui},#{!=:#{pane_index}
 "##;
 
 /// Título da borda: a barra não tem; na sessão, diz se o teclado está nela.
-const DECK_BORDER: &str = "#{?#{==:#{pane_index},0},,#{?pane_active,#[fg=#0b0e13#,bg=#5fd7af#,bold] ⌨ digitando aqui · Ctrl-q volta à árvore #[default], clique aqui ou Enter para digitar }}";
+const DECK_BORDER: &str = "#{?#{==:#{pane_index},0},,#{?pane_active,#[fg=#0b0e13#,bg=#5fd7af#,bold] ⌨ digitando aqui · Ctrl-q volta à árvore #[default],#[fg=#9aa4b2] clique aqui ou Enter para digitar #[default]}}";
 
 #[derive(Debug, Clone)]
 pub struct Tmux {
@@ -251,7 +251,10 @@ impl Tmux {
         let w = format!("={UI_SESSION}:deck");
         for (opt, val) in [
             ("pane-border-status", "top"),
-            ("pane-border-style", "fg=#2a313c"),
+            // Com dois painéis o tmux pinta metade da divisória de cada cor;
+            // sem indicadores e com cinza visível ela aparece inteira.
+            ("pane-border-indicators", "off"),
+            ("pane-border-style", "fg=#4b5563"),
             ("pane-active-border-style", "fg=#5fd7af"),
             ("pane-border-format", DECK_BORDER),
         ] {
