@@ -161,6 +161,8 @@ pub struct Config {
     pub prices: BTreeMap<String, Price>,
     /// `api` mostra o custo equivalente em API; `hidden` esconde (assinatura).
     pub cost_display: CostDisplay,
+    /// Janela de contexto por prefixo de modelo (ADR-0012).
+    pub context_windows: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -226,6 +228,7 @@ impl Default for Config {
             diff_command: "git diff {base}".into(),
             prices: default_prices(),
             cost_display: CostDisplay::Api,
+            context_windows: [("claude-".to_string(), 1_000_000)].into(),
         }
     }
 }

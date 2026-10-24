@@ -327,6 +327,15 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let mut info_block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border()));
+    if let Some((line, hot)) = context_line(app, &s.id) {
+        let color = if hot {
+            status_color(Status::Approval)
+        } else {
+            muted()
+        };
+        info_block =
+            info_block.title_bottom(Line::styled(format!(" {line} "), Style::new().fg(color)));
+    }
     if let Some(line) = compact_usage(app, &s.id) {
         info_block = info_block.title_bottom(
             Line::styled(format!(" {line} "), Style::new().fg(muted())).right_aligned(),
@@ -1154,6 +1163,41 @@ fn compact_usage(app: &App, sid: &str) -> Option<String> {
     Some(parts.join(" · "))
 }
 
+/// `contexto 45% (452,0k / 1M) · 2 compactações` e se passou de 85% (ADR-0012).
+fn context_line(app: &App, sid: &str) -> Option<(String, bool)> {
+    let ins = app.usage.insight.get(sid)?;
+    let ctx = ins.context.as_ref()?;
+    let mut out = match crate::usage::window_for(&app.config.context_windows, &ctx.model) {
+        Some(w) if w > 0 => {
+            let pct = ctx.prompt as f64 * 100.0 / w as f64;
+            (
+                format!(
+                    "contexto {pct:.0}% ({} / {})",
+                    fmt_tokens(ctx.prompt),
+                    fmt_window(w)
+                ),
+                pct >= 85.0,
+            )
+        }
+        _ => (format!("contexto {}", fmt_tokens(ctx.prompt)), false),
+    };
+    match ins.compactions.len() {
+        0 => {}
+        1 => out.0.push_str(" · 1 compactação"),
+        n => out.0.push_str(&format!(" · {n} compactações")),
+    }
+    Some(out)
+}
+
+/// `1M`, `200k`.
+fn fmt_window(w: u64) -> String {
+    if w.is_multiple_of(1_000_000) {
+        format!("{}M", w / 1_000_000)
+    } else {
+        format!("{}k", w / 1_000)
+    }
+}
+
 fn tile(f: &mut Frame, area: Rect, label: &str, value: String, sub: String, color: Color) {
     let block = rounded(border());
     let inner = block.inner(area);
@@ -1527,5 +1571,7 @@ mod tests {
             unknown: true,
         };
         assert_eq!(fmt_usd(&c), "US$ 3,40 + ?");
+        assert_eq!(fmt_window(1_000_000), "1M");
+        assert_eq!(fmt_window(200_000), "200k");
     }
 }

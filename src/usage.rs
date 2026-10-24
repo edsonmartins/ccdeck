@@ -18,7 +18,8 @@ use crate::model::Price;
 use crate::paths::{Paths, write_atomic};
 
 /// Versão do formato de `state/usage/<sid>.json`. Versão diferente = reindexar.
-pub const FORMAT_VERSION: u32 = 1;
+/// v2 (ADR-0012): contexto e compactações.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Prompt acima disso leva o sufixo `+long` no modelo: o Haiku 5.5 cobra mais
 /// por requisição com prompt longo (entrada + escrita + leitura de cache).
@@ -87,6 +88,31 @@ pub struct Cursor {
     pub last: Option<Counted>,
 }
 
+/// Contexto da última mensagem do transcript principal (ADR-0012).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextInfo {
+    pub model: String,
+    pub prompt: u64,
+}
+
+/// Linha `compact_boundary` do transcript principal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Compaction {
+    pub at: DateTime<Utc>,
+    pub trigger: String,
+    pub pre: u64,
+    pub post: u64,
+}
+
+/// O que o painel e a linha do tempo mostram além dos tokens.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Insight {
+    #[serde(default)]
+    pub context: Option<ContextInfo>,
+    #[serde(default)]
+    pub compactions: Vec<Compaction>,
+}
+
 /// Hora UTC (`AAAA-MM-DDTHH`) → modelo → tokens.
 pub type Hours = BTreeMap<String, BTreeMap<String, Tokens>>;
 
@@ -99,6 +125,8 @@ pub struct UsageIndex {
     /// Arquivo (principal ou subagente) → até onde já foi lido.
     pub files: BTreeMap<String, Cursor>,
     pub hours: Hours,
+    #[serde(default)]
+    pub insight: Insight,
 }
 
 impl Default for UsageIndex {
@@ -108,6 +136,7 @@ impl Default for UsageIndex {
             transcript: None,
             files: BTreeMap::new(),
             hours: BTreeMap::new(),
+            insight: Insight::default(),
         }
     }
 }
@@ -166,6 +195,29 @@ pub fn parse_line(line: &str) -> Option<Counted> {
     })
 }
 
+/// Compactação registrada pelo Claude Code, se a linha for uma.
+pub fn parse_compact(line: &str) -> Option<Compaction> {
+    if !line.contains("compact_boundary") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    if v.get("subtype")?.as_str()? != "compact_boundary" {
+        return None;
+    }
+    let m = v.get("compactMetadata")?;
+    let n = |k: &str| m.get(k).and_then(Value::as_u64).unwrap_or(0);
+    Some(Compaction {
+        at: v.get("timestamp")?.as_str()?.parse().ok()?,
+        trigger: m
+            .get("trigger")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        pre: n("preTokens"),
+        post: n("postTokens"),
+    })
+}
+
 fn apply(hours: &mut Hours, c: &Counted, sign_add: bool) {
     let slot = hours
         .entry(c.hour.clone())
@@ -189,7 +241,13 @@ fn apply(hours: &mut Hours, c: &Counted, sign_add: bool) {
 
 /// Lê o que cresceu em `file` desde o cursor. Para na última linha completa.
 /// Retorna se algo mudou.
-fn read_file(hours: &mut Hours, cursor: &mut Cursor, file: &Path) -> Result<bool> {
+/// `insight` só é preenchido para o transcript principal.
+fn read_file(
+    hours: &mut Hours,
+    cursor: &mut Cursor,
+    file: &Path,
+    mut insight: Option<&mut Insight>,
+) -> Result<bool> {
     let f = std::fs::File::open(file)?;
     let len = f.metadata()?.len();
     if len <= cursor.offset {
@@ -206,9 +264,23 @@ fn read_file(hours: &mut Hours, cursor: &mut Cursor, file: &Path) -> Result<bool
             break; // fim, ou linha ainda sendo escrita
         }
         cursor.offset += n as u64;
-        let Some(c) = parse_line(&String::from_utf8_lossy(&buf)) else {
+        let line = String::from_utf8_lossy(&buf);
+        if let Some(ins) = insight.as_deref_mut()
+            && let Some(comp) = parse_compact(&line)
+        {
+            ins.compactions.push(comp);
+            changed = true;
+            continue;
+        }
+        let Some(c) = parse_line(&line) else {
             continue;
         };
+        if let Some(ins) = insight.as_deref_mut() {
+            ins.context = Some(ContextInfo {
+                model: display_model(&c.model).to_string(),
+                prompt: c.tokens.prompt(),
+            });
+        }
         // Mais uma linha da mesma mensagem: a última vence.
         if let Some(prev) = cursor.last.take()
             && prev.id == c.id
@@ -258,10 +330,12 @@ pub fn update(index: &mut UsageIndex, transcript: &Path) -> Result<bool> {
     let main = transcript.to_string_lossy().to_string();
     let mut changed = shrank || index.transcript.as_deref() != Some(main.as_str());
     index.transcript = Some(main);
-    for f in files {
+    for (i, f) in files.into_iter().enumerate() {
         let key = f.to_string_lossy().to_string();
         let cursor = index.files.entry(key).or_default();
-        match read_file(&mut index.hours, cursor, &f) {
+        // O primeiro é o principal: só ele define o contexto da sessão.
+        let insight = (i == 0).then_some(&mut index.insight);
+        match read_file(&mut index.hours, cursor, &f, insight) {
             Ok(c) => changed |= c,
             // O principal ainda não existe no começo da sessão; subagente
             // pode sumir. Nada disso é erro para a TUI.
@@ -309,6 +383,15 @@ pub fn cost(prices: &BTreeMap<String, Price>, model: &str, t: &Tokens) -> Option
     )
 }
 
+/// Janela de contexto do modelo: vence o prefixo mais longo (ADR-0012).
+pub fn window_for(windows: &BTreeMap<String, u64>, model: &str) -> Option<u64> {
+    windows
+        .iter()
+        .filter(|(p, _)| model.starts_with(p.as_str()))
+        .max_by_key(|(p, _)| p.len())
+        .map(|(_, v)| *v)
+}
+
 /// Modelo sem os sufixos internos (`+fast`, `+long`), para exibir.
 pub fn display_model(model: &str) -> &str {
     model.split('+').next().unwrap_or(model)
@@ -321,7 +404,7 @@ pub struct Job {
     pub transcript: PathBuf,
 }
 
-type Msg = (String, Hours);
+type Msg = (String, Hours, Insight);
 
 /// Indexa transcripts numa thread e devolve os agregados por canal.
 pub struct UsageScanner {
@@ -330,6 +413,7 @@ pub struct UsageScanner {
     in_flight: usize,
     pub last: Option<std::time::Instant>,
     pub hours: std::collections::HashMap<String, Hours>,
+    pub insight: std::collections::HashMap<String, Insight>,
     /// Sessão → transcript principal conhecido (do hook ou do índice salvo).
     pub transcripts: std::collections::HashMap<String, PathBuf>,
 }
@@ -343,6 +427,7 @@ impl Default for UsageScanner {
             in_flight: 0,
             last: None,
             hours: Default::default(),
+            insight: Default::default(),
             transcripts: Default::default(),
         }
     }
@@ -360,6 +445,7 @@ impl UsageScanner {
             if let Some(t) = &idx.transcript {
                 self.transcripts.insert(sid.clone(), PathBuf::from(t));
             }
+            self.insight.insert(sid.clone(), idx.insight);
             if !idx.hours.is_empty() {
                 self.hours.insert(sid.clone(), idx.hours);
             }
@@ -378,24 +464,25 @@ impl UsageScanner {
                 let mut idx = load(&paths, &j.session);
                 if let Ok(true) = update(&mut idx, &j.transcript) {
                     let _ = save(&paths, &j.session, &idx);
-                    if tx.send((j.session, idx.hours)).is_err() {
+                    if tx.send((j.session, idx.hours, idx.insight)).is_err() {
                         return;
                     }
                 }
             }
             // Marcador de fim do lote.
-            let _ = tx.send((String::new(), Hours::new()));
+            let _ = tx.send((String::new(), Hours::new(), Insight::default()));
         });
     }
 
     /// Recolhe resultados prontos. Retorna se algo mudou.
     pub fn collect(&mut self) -> bool {
         let mut changed = false;
-        while let Ok((sid, hours)) = self.rx.try_recv() {
+        while let Ok((sid, hours, insight)) = self.rx.try_recv() {
             if sid.is_empty() {
                 self.in_flight = self.in_flight.saturating_sub(1);
                 continue;
             }
+            self.insight.insert(sid.clone(), insight);
             self.hours.insert(sid, hours);
             changed = true;
         }
@@ -510,6 +597,44 @@ mod tests {
         update(&mut idx, &p).unwrap();
         assert_eq!(total(&idx.hours).output, 3);
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn contexto_e_compactacao_so_do_principal() {
+        let main = tmp("u-2.jsonl");
+        let dir = main.parent().unwrap();
+        let sub = dir.join("u-2").join("subagents");
+        std::fs::create_dir_all(&sub).unwrap();
+        let a = |id: &str, read: u64| {
+            format!(
+                r#"{{"type":"assistant","timestamp":"2026-10-23T10:00:00Z","message":{{"id":"{id}","model":"claude-opus-5-5","usage":{{"input_tokens":2,"cache_read_input_tokens":{read},"output_tokens":1,"speed":"fast"}}}}}}"#
+            ) + "\n"
+        };
+        let compact = r#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-10-23T10:05:00Z","compactMetadata":{"trigger":"auto","preTokens":968478,"postTokens":18395,"durationMs":1}}"#;
+        std::fs::write(&main, a("m1", 900_000) + compact + "\n" + &a("m2", 20_000)).unwrap();
+        std::fs::write(sub.join("agent-x.jsonl"), a("s1", 500_000)).unwrap();
+        let mut idx = UsageIndex::default();
+        update(&mut idx, &main).unwrap();
+        let ctx = idx.insight.context.clone().unwrap();
+        assert_eq!(ctx.prompt, 20_002, "última do principal, não do subagente");
+        assert_eq!(ctx.model, "claude-opus-5-5");
+        assert_eq!(idx.insight.compactions.len(), 1);
+        assert_eq!(
+            (
+                idx.insight.compactions[0].pre,
+                idx.insight.compactions[0].post
+            ),
+            (968_478, 18_395)
+        );
+        let w: BTreeMap<String, u64> = [
+            ("claude-".to_string(), 1_000_000),
+            ("claude-haiku-4-5".to_string(), 200_000),
+        ]
+        .into();
+        assert_eq!(window_for(&w, "claude-opus-5-5"), Some(1_000_000));
+        assert_eq!(window_for(&w, "claude-haiku-4-5"), Some(200_000));
+        assert_eq!(window_for(&w, "gpt"), None);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
