@@ -509,9 +509,16 @@ fn draw_middle(f: &mut Frame, app: &App, s: &crate::model::Session, area: Rect) 
             .right_aligned(),
         );
     }
-    let msg = app
-        .last_message(s)
-        .unwrap_or_else(|| "(nenhum turno concluído ainda)".into());
+    let msg = app.last_message(s).unwrap_or_else(|| {
+        if st == Status::Starting {
+            // Diálogo de confiança na pasta não dispara hook (validacao-v0.2.md).
+            "(nenhum evento do Claude Code ainda — se demorar, entre com Enter: \
+             pode ser o diálogo de confiança na pasta)"
+                .into()
+        } else {
+            "(nenhum turno concluído ainda)".into()
+        }
+    });
     let inner = block.inner(msg_area);
     f.render_widget(block, msg_area);
     f.render_widget(
