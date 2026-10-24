@@ -107,11 +107,10 @@ No macOS os caminhos seguem `directories` (`~/Library/Application Support/...`).
   - `add-diff-and-collisions` — alterações por sessão, aviso de colisão, diff completo com `D` (ADR-0009)
   - `fix-state-after-interrupt` — estado depois de recusa/interrupção, que não disparam hook (ADR-0011)
   - `add-usage-summary` — aba Resumo: tokens, custo equivalente em API, cache, tempo esperando você, atividade e arquivos (ADR-0010)
-- **v0.3** — changes em `openspec/changes/` (em andamento):
+- **v0.3** — changes em `openspec/changes/` (concluídos):
   - `add-context-timeline` — contexto usado, compactações e linha do tempo `L` (ADR-0012)
   - `add-session-verify` — verificação por sessão `t` com `verify` do `.ccdeck.json` (ADR-0013)
   - `add-session-starters` — modelos de sessão e sessão a partir de change do OpenSpec (ADR-0014)
   - `add-aux-windows` — janelas auxiliares por sessão `w` (ADR-0015)
   - `add-broadcast` — mesmo prompt para várias sessões em *Aguardando você* `B` (ADR-0016)
   - `add-delivery` — entrega com commit, push e PR via `gh`, e status do CI `E` (ADR-0017)
-- **v0.3 (restante)** — sessão a partir de change do OpenSpec, templates por projeto, verificação por sessão (`t`), entrega com commit/push/PR via `gh` e status do CI, linha do tempo e custo/contexto por sessão, janelas auxiliares, broadcast de prompt.
