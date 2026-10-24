@@ -74,6 +74,7 @@ Ver o protótipo navegável das telas (canvas de Design). Resumo:
 | `L` | linha do tempo da sessão |
 | `t` / `T` | verificação da sessão / log |
 | `w` | janelas auxiliares da sessão |
+| `B` | broadcast de prompt |
 | `e` | editar notas |
 | `r` | renomear |
 | `d` | remover |

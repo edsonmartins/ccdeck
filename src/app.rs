@@ -171,6 +171,13 @@ pub enum Modal {
     },
     Filter,
     Help,
+    /// Broadcast (ADR-0016). `focus` 0 = texto, `i` = `targets[i - 1]`.
+    Broadcast {
+        text: TextInput,
+        targets: Vec<crate::broadcast::Target>,
+        focus: usize,
+        confirming: bool,
+    },
     /// Janelas da sessão (ADR-0015). `confirm` = janela aguardando o segundo `K`.
     Windows {
         session: String,
@@ -941,6 +948,73 @@ impl App {
         Ok(())
     }
 
+    /// `B`: mesmo texto para várias sessões em *Aguardando você* (ADR-0016).
+    pub fn open_broadcast(&mut self) {
+        let current = self.selected_project().map(|p| p.id.clone());
+        let candidates: Vec<crate::broadcast::Candidate> = self
+            .state
+            .sessions
+            .iter()
+            .map(|s| {
+                (
+                    s.id.as_str(),
+                    s.project_id.as_str(),
+                    self.status_of(s),
+                    self.alive.contains(&s.tmux_name()),
+                )
+            })
+            .collect();
+        let targets = crate::broadcast::targets(&candidates, current.as_deref());
+        if targets.is_empty() {
+            self.error("nenhuma sessão viva em Aguardando você");
+            return;
+        }
+        self.modal = Modal::Broadcast {
+            text: TextInput::new(""),
+            targets,
+            focus: 0,
+            confirming: false,
+        };
+    }
+
+    fn send_broadcast(&mut self, text: &str, targets: &[crate::broadcast::Target]) {
+        let (mut sent, mut skipped) = (0, Vec::new());
+        for t in targets.iter().filter(|t| t.checked) {
+            let Some(s) = self
+                .state
+                .sessions
+                .iter()
+                .find(|s| s.id == t.session)
+                .cloned()
+            else {
+                continue;
+            };
+            // Reconfere no disco, como as travas do y/x (ADR-0007).
+            let fresh = store::load_status(&self.paths, &s.id).map(|r| r.status);
+            let alive = self.tmux.list().contains(&s.tmux_name());
+            if !crate::broadcast::still_eligible(fresh, alive) {
+                skipped.push(s.name.clone());
+                continue;
+            }
+            match self.tmux.send_text(&s.tmux_name(), text) {
+                Ok(()) => {
+                    self.log_action(&s, "broadcast", text);
+                    sent += 1;
+                }
+                Err(_) => skipped.push(s.name.clone()),
+            }
+        }
+        if skipped.is_empty() {
+            self.info(format!("broadcast enviado a {sent} sessões"));
+        } else {
+            self.error(format!(
+                "broadcast enviado a {sent}, pulada(s) {}: {} (mudaram de estado)",
+                skipped.len(),
+                skipped.join(", ")
+            ));
+        }
+    }
+
     /// `D`: diff completo com a TUI suspensa (ADR-0009).
     pub fn open_diff(&mut self) {
         let Some(s) = self.selected_session() else {
@@ -1510,6 +1584,98 @@ impl App {
                 self.handle_normal(key);
                 return;
             }
+            Modal::Broadcast {
+                mut text,
+                mut targets,
+                mut focus,
+                confirming,
+            } => {
+                let n = targets.len() + 1;
+                match key.code {
+                    KeyCode::Esc if confirming => Modal::Broadcast {
+                        text,
+                        targets,
+                        focus,
+                        confirming: false,
+                    },
+                    KeyCode::Esc => Modal::None,
+                    KeyCode::Enter if confirming => {
+                        self.send_broadcast(text.value.trim(), &targets);
+                        Modal::None
+                    }
+                    KeyCode::Enter => {
+                        let marked = targets.iter().filter(|t| t.checked).count();
+                        if text.value.trim().is_empty() {
+                            self.error("escreva o texto do broadcast");
+                        } else if marked == 0 {
+                            self.error("marque ao menos uma sessão (Espaço)");
+                        }
+                        let ok = !text.value.trim().is_empty() && marked > 0;
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming: ok,
+                        }
+                    }
+                    _ if confirming => Modal::Broadcast {
+                        text,
+                        targets,
+                        focus,
+                        confirming,
+                    },
+                    KeyCode::Tab | KeyCode::Down => {
+                        focus = (focus + 1) % n;
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming,
+                        }
+                    }
+                    KeyCode::BackTab | KeyCode::Up => {
+                        focus = (focus + n - 1) % n;
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming,
+                        }
+                    }
+                    KeyCode::Char(' ') if focus > 0 => {
+                        if let Some(t) = targets.get_mut(focus - 1) {
+                            t.checked = !t.checked;
+                        }
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming,
+                        }
+                    }
+                    KeyCode::Char('*') if focus > 0 => {
+                        let all = targets.iter().all(|t| t.checked);
+                        targets.iter_mut().for_each(|t| t.checked = !all);
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming,
+                        }
+                    }
+                    _ => {
+                        if focus == 0 {
+                            text.handle(key);
+                        }
+                        Modal::Broadcast {
+                            text,
+                            targets,
+                            focus,
+                            confirming,
+                        }
+                    }
+                }
+            }
             Modal::Windows {
                 session,
                 items,
@@ -1818,6 +1984,7 @@ impl App {
             KeyCode::Char('L') => self.open_timeline(),
             KeyCode::Char('t') => self.run_verify(),
             KeyCode::Char('w') => self.open_windows(),
+            KeyCode::Char('B') => self.open_broadcast(),
             KeyCode::Char('T') => self.open_verify_log(),
             KeyCode::Char('/') => self.modal = Modal::Filter,
             KeyCode::Char('?') => self.modal = Modal::Help,

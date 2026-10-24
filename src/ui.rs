@@ -801,6 +801,89 @@ fn draw_modal(f: &mut Frame, app: &App) {
     let area = f.area();
     match &app.modal {
         Modal::None | Modal::Filter => {}
+        Modal::Broadcast {
+            text,
+            targets,
+            focus,
+            confirming,
+        } => {
+            let r = centered(area, 96, targets.len() as u16 + 11);
+            f.render_widget(Clear, r);
+            let marked: Vec<&crate::broadcast::Target> =
+                targets.iter().filter(|t| t.checked).collect();
+            let color = if *confirming {
+                status_color(Status::Approval)
+            } else {
+                accent()
+            };
+            let hint = if *confirming {
+                " Enter envia · Esc volta "
+            } else {
+                " Tab/↑↓ move · Espaço marca · * todas · Enter revisa · Esc cancela "
+            };
+            let block = modal_block("Broadcast — sessões em Aguardando você".into(), color)
+                .title_bottom(Line::styled(hint, Style::new().fg(muted())).right_aligned());
+            let inner = block.inner(r);
+            f.render_widget(block, r);
+            let name_of = |sid: &str| {
+                app.state
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == sid)
+                    .map(|s| {
+                        let p = app
+                            .project(&s.project_id)
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("");
+                        (s.name.clone(), p.to_string())
+                    })
+                    .unwrap_or_default()
+            };
+            let mut lines = field_line(
+                "Texto (enviado como no m, seguido de Enter)",
+                text.with_cursor(*focus == 0 && !*confirming),
+                *focus == 0,
+            );
+            lines.push(Line::raw(""));
+            if *confirming {
+                lines.push(Line::styled(
+                    format!(
+                        "Enviar \"{}\" para {} sessões?",
+                        text.value.trim(),
+                        marked.len()
+                    ),
+                    Style::new().fg(color).bold(),
+                ));
+                for t in &marked {
+                    let (n, p) = name_of(&t.session);
+                    lines.push(Line::styled(format!("  ◆ {n}  {p}"), Style::new().fg(fg())));
+                }
+                lines.push(Line::styled(
+                    "Cada uma é conferida de novo no envio; quem mudou de estado é pulada.",
+                    Style::new().fg(muted()),
+                ));
+            } else {
+                lines.push(Line::styled(
+                    format!("Destinos ({} de {} marcadas)", marked.len(), targets.len()),
+                    Style::new().fg(muted()),
+                ));
+                for (i, t) in targets.iter().enumerate() {
+                    let (n, p) = name_of(&t.session);
+                    let sel = *focus == i + 1;
+                    let line = Line::from(vec![
+                        Span::styled(if sel { " › " } else { "   " }, Style::new().fg(accent())),
+                        Span::styled(
+                            if t.checked { "[x] " } else { "[ ] " },
+                            Style::new().fg(accent()),
+                        ),
+                        Span::styled(format!("{n:<28}"), Style::new().fg(fg())),
+                        Span::styled(p, Style::new().fg(muted())),
+                    ]);
+                    lines.push(if sel { line.bg(sel_bg()) } else { line });
+                }
+            }
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        }
         Modal::Windows {
             session,
             items,
@@ -930,7 +1013,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
             f.render_widget(Paragraph::new(lines), inner);
         }
         Modal::Help => {
-            let r = centered(area, 66, 25);
+            let r = centered(area, 66, 26);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -943,6 +1026,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("L", "linha do tempo da sessão"),
                 ("t / T", "verificar (verify do .ccdeck.json) / ver o log"),
                 ("w", "janelas da sessão (shell, servidor, logs)"),
+                ("B", "broadcast: mesmo texto para várias sessões"),
                 ("n / N", "nova sessão / novo projeto"),
                 ("a", "alternar visão Atenção"),
                 ("Tab", "Projetos → Atenção → Resumo"),

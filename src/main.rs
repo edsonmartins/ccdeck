@@ -1,6 +1,7 @@
 //! ccdeck — gerenciador de sessões do Claude Code no terminal.
 
 mod app;
+mod broadcast;
 mod changes;
 mod events;
 mod git;
