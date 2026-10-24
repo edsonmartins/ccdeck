@@ -10,7 +10,7 @@ use uuid::Uuid;
 pub const SCHEMA_VERSION: u32 = 2;
 
 /// Estado de uma sessão, derivado de hooks (ADR-0004) e da presença no tmux.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Starting,

@@ -1053,6 +1053,7 @@ impl App {
         self.usage.hours.remove(&s.id);
         self.usage.transcripts.remove(&s.id);
         usage::remove(&self.paths, &s.id);
+        crate::events::remove(&self.paths, &s.id);
         self.state.sessions.remove(idx);
         self.collisions = changes::collisions(&self.state.sessions, &self.scanner.results);
         self.save();

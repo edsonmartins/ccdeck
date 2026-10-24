@@ -2,6 +2,7 @@
 
 mod app;
 mod changes;
+mod events;
 mod git;
 mod hook;
 mod input;

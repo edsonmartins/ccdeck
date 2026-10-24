@@ -10,6 +10,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Value, json};
 
+use crate::events;
 use crate::model::{Status, StatusRecord, ToolCall};
 use crate::paths::{Paths, write_atomic};
 
@@ -96,7 +97,22 @@ pub fn record(paths: &Paths, sid: &str, input: &Value) -> Result<()> {
         .and_then(|b| serde_json::from_slice(&b).ok());
     let now = Utc::now();
     let rec = merge(prev.as_ref(), input, status, event, detail, now);
-    write_atomic(&file, &serde_json::to_vec(&rec)?)
+    write_atomic(&file, &serde_json::to_vec(&rec)?)?;
+    append_event(paths, sid, &rec);
+    Ok(())
+}
+
+/// Histórico para o Resumo (ADR-0010). Falha aqui não pode afetar o status.
+fn append_event(paths: &Paths, sid: &str, rec: &StatusRecord) {
+    let _ = events::append(
+        paths,
+        sid,
+        &events::Event {
+            at: rec.at,
+            status: rec.status,
+            event: rec.event.clone(),
+        },
+    );
 }
 
 /// Grava um estado vindo de uma ação do próprio ccdeck (ADR-0011), só se o
@@ -128,6 +144,7 @@ pub fn record_local(
         ..prev
     };
     write_atomic(&file, &serde_json::to_vec(&rec)?)?;
+    append_event(paths, sid, &rec);
     Ok(true)
 }
 
@@ -395,6 +412,19 @@ mod tests {
         assert!(r.pending.is_none());
         assert_eq!(r.last_tool.unwrap().summary, "mkdir x");
         assert_eq!(r.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
+        let evs: Vec<String> = std::fs::read_to_string(paths.events_dir().join("s.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<events::Event>(l).unwrap().event)
+            .collect();
+        assert_eq!(
+            evs,
+            [
+                "PermissionRequest · Bash",
+                "Notification · permission_prompt",
+                "ccdeck · recusado"
+            ]
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 

@@ -57,6 +57,11 @@ impl Paths {
         self.status_dir().join(format!("{session_id}.json"))
     }
 
+    /// Histórico de eventos por sessão (ADR-0010).
+    pub fn events_dir(&self) -> PathBuf {
+        self.state_dir.join("events")
+    }
+
     /// Índice de uso da sessão (ADR-0010).
     pub fn usage_file(&self, session_id: &str) -> PathBuf {
         self.state_dir
