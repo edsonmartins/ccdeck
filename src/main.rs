@@ -152,10 +152,14 @@ fn doctor(paths: &Paths) -> Result<()> {
         ("git", "--version", "≥ 2.20"),
         (cfg.claude_command.as_str(), "--version", "Claude Code"),
     ];
+    let mut missing = Vec::new();
     for (bin, arg, req) in checks {
         match which(bin) {
             Some(p) => println!("ok   {bin:<8} {}  ({p})", version(bin, arg)),
-            None => println!("FALTA {bin:<8} {req}"),
+            None => {
+                println!("FALTA {bin:<8} {req}");
+                missing.push(bin.to_string());
+            }
         }
     }
     println!();
@@ -164,5 +168,8 @@ fn doctor(paths: &Paths) -> Result<()> {
     println!("hooks   {}", paths.hooks_file().display());
     println!("status  {}", paths.status_dir().display());
     println!("tmux    tmux -L {} (sessões do deck)", tmux::SOCKET);
+    if !missing.is_empty() {
+        bail!("dependências faltando: {}", missing.join(", "));
+    }
     Ok(())
 }
