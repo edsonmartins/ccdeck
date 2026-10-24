@@ -1,6 +1,6 @@
 # ADR-0010 — Resumo de uso (tokens, custo, espera)
 
-- Status: Proposto
+- Status: Aceito
 - Data: 2026-10-23
 
 ## Contexto
@@ -37,10 +37,12 @@ Para não reler transcripts grandes, `state/usage/<sid>.json` guarda, por arquiv
 - Modelo sem preço configurado: custo mostrado como `?` e aviso no `ccdeck doctor`.
 
 ### Telas
+- [confirmado] Implementadas e conferidas contra cálculo independente nos transcripts reais (tokens e custo idênticos), 2026-10-23.
 - Terceira aba na sidebar: **Projetos | Atenção | Resumo** (`Tab` alterna).
 - Resumo: blocos (tokens, custo equivalente, taxa de cache, entrada/saída, arquivos modificados, tempo esperando você), barras de tokens por hora, linha de custo e mensagens, tabela por sessão, atividade recente e arquivos modificados.
 - Filtro de período com `p` (hoje / 7 dias / 30 dias) e por projeto com `/`.
 - No painel de cada sessão, uma linha compacta com tokens, custo e espera daquela sessão.
+- Como ficou na implementação: em "hoje" as barras são por hora; em 7 e 30 dias, por dia (barras por hora em 30 dias não cabem). O `/` reaproveita o filtro da sidebar (nome da sessão, projeto ou branch). A linha de custo e a de mensagens usam escala relativa, cada uma com seu máximo na legenda. A espera de uma sessão morta para no último evento dela.
 
 ## Alternativas
 - **OpenTelemetry do Claude Code**: dá métricas oficiais, mas exige coletor rodando e configuração por usuário. Pode virar uma segunda fonte depois.

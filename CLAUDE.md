@@ -18,6 +18,9 @@ Leia antes de qualquer mudança: `CONSTITUTION.md` (invariantes), `docs/SPEC.md`
 - `changes.rs` — varredura de alterações em thread e colisões.
 - `project.rs` — `.ccdeck.json`: cópia, setup, portas.
 - `transcript.rs` — última resposta lida do fim do transcript.
+- `usage.rs` — índice incremental de tokens por transcript (+ subagentes) e custo (ADR-0010).
+- `events.rs` — histórico de eventos por sessão e tempo em cada estado.
+- `summary.rs` — agregados da aba Resumo (funções puras).
 - `store.rs` (migrações de schema), `paths.rs`, `model.rs`, `input.rs`, `notify.rs`.
 
 ## Changes

@@ -37,6 +37,7 @@ ccdeck            # abre a TUI
 - **Retomada**: cada sessão nasce com `--session-id`; se o processo morrer, `Enter` retoma com `claude --resume <id>` no mesmo diretório.
 - **Responder sem entrar**: o painel mostra o pedido de permissão pendente e a última resposta do Claude; `y`/`x` respondem o pedido e `m` envia uma resposta. O `y` só funciona se o pedido estiver na tela há pelo menos 600 ms e ainda for o mesmo.
 - **Alterações e colisões**: cada sessão mostra os arquivos que mudou desde a base; se duas sessões do mesmo projeto mexem no mesmo arquivo, aparece `⚠`.
+- **Resumo de uso** (`Tab` até a aba Resumo): tokens, custo equivalente em API, taxa de cache, tempo que as sessões ficaram esperando você, atividade recente e arquivos modificados, por período (`p`: hoje / 7 / 30 dias). Lido dos transcripts locais do Claude Code (inclui subagentes); nada sai da máquina. Para quem usa assinatura, `"cost_display": "hidden"` esconde o custo; a tabela `prices` do `config.json` pode ser editada.
 - **Notificação**: quando uma sessão passa a esperar aprovação, termina o turno ou dá erro, você recebe notificação de desktop (`osascript`/`notify-send`) e um sino no terminal.
 
 ## Atalhos
@@ -51,7 +52,9 @@ ccdeck            # abre a TUI
 | `Enter` | entrar na sessão (retoma se suspensa) |
 | `Ctrl-q` | dentro da sessão: voltar ao ccdeck |
 | `n` / `N` | nova sessão / novo projeto |
-| `a` ou `Tab` | visão Atenção |
+| `a` | visão Atenção |
+| `Tab` | Projetos → Atenção → Resumo |
+| `p` | no Resumo: período (hoje / 7 dias / 30 dias) |
 | `/` | filtrar |
 | `e` | notas (Ctrl-s salva) |
 | `r` | renomear |

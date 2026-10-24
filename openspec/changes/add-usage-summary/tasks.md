@@ -26,4 +26,4 @@
 ## 4. Verificação
 - [x] 4.1 Testes do parser com fixtures, dedupe e cálculo de custo
 - [x] 4.2 Teste de leitura incremental (arquivo crescendo)
-- [ ] 4.3 Fluxo real com transcript gerado pelo `scripts/fake-claude.sh`
+- [x] 4.3 Fluxo real com transcript gerado pelo `scripts/fake-claude.sh`
