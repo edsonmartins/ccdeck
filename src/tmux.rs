@@ -14,6 +14,8 @@ const CONF: &str = r##"# Gerado pelo ccdeck — não edite; é recriado a cada a
 set -g mouse on
 set -g history-limit 50000
 set -sg escape-time 10
+# O Claude Code usa focus events (avisa na tela quando estão desligados).
+set -g focus-events on
 set -g default-terminal "tmux-256color"
 set -g status on
 set -g status-interval 2
