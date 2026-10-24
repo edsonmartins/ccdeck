@@ -26,6 +26,15 @@ use crate::tmux::{SETUP_WINDOW, Tmux};
 const LIST_EVERY: Duration = Duration::from_secs(2);
 /// Tempo mínimo que um pedido precisa ficar na tela antes de `y`/`x` (ADR-0007).
 const MIN_SEEN: Duration = Duration::from_millis(600);
+/// Em *Trabalhando* sem evento novo por esse tempo, o painel avisa (ADR-0011).
+const STALE_AFTER_MIN: i64 = 5;
+
+/// Minutos sem evento de uma sessão em *Trabalhando*, quando passou do limite.
+/// Interromper com `Esc` dentro da sessão não dispara hook (ADR-0011).
+pub fn stale_minutes(status: Status, last_event: DateTime<Utc>, now: DateTime<Utc>) -> Option<i64> {
+    let min = (now - last_event).num_minutes();
+    (status == Status::Working && min >= STALE_AFTER_MIN).then_some(min)
+}
 
 #[derive(Debug, Clone)]
 pub struct Runtime {
@@ -1239,5 +1248,20 @@ pub fn ago(t: DateTime<Utc>) -> String {
         60..=3599 => format!("{} min", secs / 60),
         3600..=86_399 => format!("{} h", secs / 3600),
         _ => format!("{} d", secs / 86_400),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aviso_sem_eventos() {
+        let now = Utc::now();
+        let ha = |m| now - chrono::Duration::minutes(m);
+        assert_eq!(stale_minutes(Status::Working, ha(4), now), None);
+        assert_eq!(stale_minutes(Status::Working, ha(7), now), Some(7));
+        assert_eq!(stale_minutes(Status::Approval, ha(30), now), None);
+        assert_eq!(stale_minutes(Status::Yours, ha(30), now), None);
     }
 }

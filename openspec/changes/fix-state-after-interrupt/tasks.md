@@ -6,7 +6,7 @@
 ## 2. Código
 - [x] 2.1 `hook::record_local`: grava status sintético só se o `at` no disco não mudou
 - [x] 2.2 `answer_permission`: recusa bem-sucedida grava *Aguardando você* (`ccdeck · recusado`)
-- [ ] 2.3 Aviso "sem eventos há N min" em *Trabalhando* parado há 5 min ou mais
+- [x] 2.3 Aviso "sem eventos há N min" em *Trabalhando* parado há 5 min ou mais
 - [ ] 2.4 Rótulo "padrão das suas settings" para o modo `default`
 
 ## 3. Verificação

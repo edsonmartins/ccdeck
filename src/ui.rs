@@ -338,7 +338,15 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         ]
     };
     let since = rt.map(|r| ago(r.since)).unwrap_or_else(|| "—".into());
-    let event = rt.map(|r| r.event.clone()).unwrap_or_else(|| "—".into());
+    let event = rt
+        .map(|r| {
+            let last = r.record.as_ref().map(|x| x.at).unwrap_or(r.since);
+            match crate::app::stale_minutes(r.status, last, chrono::Utc::now()) {
+                Some(m) => format!("{} · sem eventos há {m} min", r.event),
+                None => r.event.clone(),
+            }
+        })
+        .unwrap_or_else(|| "—".into());
     let sid = s.claude_session_id.to_string();
     let wt = if s.worktree {
         short_path(&s.cwd, col_w)
