@@ -37,7 +37,7 @@ ccdeck            # abre a árvore + a sessão ao lado (Ctrl-q volta à árvore 
 
 ## Como funciona
 
-- **Árvore à esquerda, sessão à direita**: `ccdeck` abre o modo integrado. Clique numa sessão (ou `j`/`k`) e ela aparece viva ao lado; `Enter` põe o foco nela e `Ctrl-q` volta à árvore (na árvore, desconecta sem parar nada). Modais, o Resumo e os detalhes da sessão (`i`) abrem com zoom.
+- **Árvore à esquerda, sessão à direita**: `ccdeck` abre o modo integrado. Clique numa sessão (ou `j`/`k`) e ela aparece viva ao lado; `Enter` (ou um clique no painel da direita) põe o teclado nela e `Ctrl-q` volta à árvore (na árvore, desconecta sem parar nada). Enquanto o teclado está na sessão, o topo da barra mostra **⌨ digitando na sessão** e a borda da direita fica acesa. Abas e os botões `+ Sessão`, `+ Projeto` e `? Ajuda` aceitam clique. Modais, o Resumo e os detalhes da sessão (`i`) abrem com zoom.
 - **Sessões vivem num tmux dedicado** (`tmux -L ccdeck`), separado do seu tmux. Fechar o ccdeck não mata nada; não feche `ccdeck-ui` com `tmux kill-session` enquanto uma sessão aparece à direita (use `q`).
 - **Worktree por sessão**: ao criar uma sessão num repositório, o ccdeck cria `<repo>.worktrees/<slug>` num branch `ccdeck/<slug>`.
 - **Estado via hooks oficiais**: o ccdeck passa um settings com hooks (`claude --settings`) que chamam `ccdeck hook`. Nada é escrito no seu `~/.claude/settings.json`.
@@ -65,7 +65,7 @@ ccdeck            # abre a árvore + a sessão ao lado (Ctrl-q volta à árvore 
 | `B` | broadcast: mesmo texto para várias sessões em Aguardando você (com confirmação) |
 | `E` | entrega: commit, push e PR (`gh`), cada um com confirmação |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
-| clique / roda | selecionar sessão ou projeto na árvore |
+| clique / roda | selecionar sessão ou projeto na árvore; abas e botões `+ Sessão`/`+ Projeto`/`? Ajuda` |
 | `Enter` | foco na sessão à direita (retoma se suspensa) |
 | `Ctrl-q` | na sessão: voltar à árvore; na árvore: desconectar |
 | `n` / `N` | nova sessão / novo projeto |

@@ -123,11 +123,13 @@ fn run_tui(paths: Paths, sidebar: String) -> Result<()> {
     let mut app = App::new(paths, &exe)?;
     app.enable_ui(sidebar);
     let mouse = |on: bool| {
-        use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        use ratatui::crossterm::event::{
+            DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+        };
         let _ = if on {
-            ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+            ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)
         } else {
-            ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+            ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange)
         };
     };
     let mut terminal = ratatui::init();
@@ -139,6 +141,8 @@ fn run_tui(paths: Paths, sidebar: String) -> Result<()> {
             if event::poll(Duration::from_millis(250))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                    Event::FocusGained => app.focused = true,
+                    Event::FocusLost => app.focused = false,
                     Event::Mouse(m) => match m.kind {
                         MouseEventKind::Down(MouseButton::Left) => app.click(m.column, m.row),
                         MouseEventKind::ScrollDown => app.scroll(true),

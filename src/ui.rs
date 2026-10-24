@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
-use crate::app::{App, Item, Modal, Task, TaskState, View, ago};
+use crate::app::{App, Item, Modal, Task, TaskState, View, Zone, ago};
 use crate::input::Field;
 use crate::model::{PERMISSION_MODES, Status, permission_mode_label};
 
@@ -177,29 +177,48 @@ fn draw_ui_bar(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+    // Sem foco, as teclas vão para a sessão da direita: isso precisa saltar aos olhos.
+    if !app.focused && app.ui.is_some() {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                " ⌨ digitando na sessão · Ctrl-q volta ",
+                Style::new().fg(Color::Black).bg(accent()).bold(),
+            )]))
+            .bg(accent()),
+            area,
+        );
+        return;
+    }
     let total = app.state.sessions.len();
     let att = app.attention_count();
     let mut spans = vec![
         Span::styled(" ccdeck ", Style::new().fg(accent()).bold()),
         Span::styled(
-            format!(" {total} sessões em {} projetos ", app.state.projects.len()),
+            format!(" {total} {} ", plural(total, "sessão", "sessões")),
             Style::new().fg(muted()),
         ),
     ];
     if att > 0 {
         spans.push(Span::styled(
-            format!(" {att} precisam de você "),
+            format!(
+                "· {att} {} ",
+                plural(att, "precisa de você", "precisam de você")
+            ),
             Style::new().fg(status_color(Status::Approval)).bold(),
         ));
     }
     let coll = app.collision_count();
     if coll > 0 {
         spans.push(Span::styled(
-            format!(" ⚠ {coll} sessões com colisão "),
+            format!("· ⚠ {coll} "),
             Style::new().fg(collision_color()).bold(),
         ));
     }
     f.render_widget(Paragraph::new(Line::from(spans)).bg(panel()), area);
+}
+
+fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
+    if n == 1 { one } else { many }
 }
 
 fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
@@ -214,13 +233,15 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::new().fg(border()));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let [tabs, filter, list, legend] = Layout::vertical([
+    let [tabs, filter, list, buttons] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
-        Constraint::Length(2),
+        Constraint::Length(1),
     ])
     .areas(inner);
+    let mut zones = app.click_zones.borrow_mut();
+    zones.clear();
 
     let tab = |label: String, on: bool, color: Color| {
         if on {
@@ -232,20 +253,38 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!(" {label} "), Style::new().fg(muted()))
         }
     };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
+    let tab_spans = [
+        (
             tab("Projetos".into(), app.view == View::Tree, accent()),
-            Span::raw(" "),
+            View::Tree,
+        ),
+        (
             tab(
                 format!("Atenção ({})", app.attention_count()),
                 app.view == View::Attention,
                 status_color(Status::Approval),
             ),
-            Span::raw(" "),
+            View::Attention,
+        ),
+        (
             tab("Resumo".into(), app.view == View::Summary, accent()),
-        ])),
-        tabs,
-    );
+            View::Summary,
+        ),
+    ];
+    let mut spans = Vec::new();
+    let mut x = tabs.x;
+    for (span, view) in tab_spans {
+        let w = span.content.chars().count() as u16;
+        zones.push((
+            Rect::new(x, tabs.y, w.min(tabs.right().saturating_sub(x)), 1),
+            Zone::Tab(view),
+        ));
+        x += w + 1;
+        spans.push(span);
+        spans.push(Span::raw(" "));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), tabs);
+    zones.push((filter, Zone::Filter));
 
     let filtering = matches!(app.modal, Modal::Filter);
     let ftxt = if app.filter.value.is_empty() && !filtering {
@@ -266,7 +305,9 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     if items.is_empty() {
         let msg = match app.view {
-            View::Tree if app.state.projects.is_empty() => " Nenhum projeto. N cadastra um.",
+            View::Tree if app.state.projects.is_empty() => {
+                " Nenhum projeto. Clique em + Projeto (ou N)."
+            }
             View::Tree | View::Summary => " Nada encontrado.",
             View::Attention => " Nenhuma sessão precisa de você.",
         };
@@ -327,29 +368,30 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     }
     f.render_widget(Paragraph::new(lines), list);
 
-    let legend_line = |s: Status, t: &'static str| {
+    let button = |label: &'static str| {
         Span::styled(
-            format!("{} {t}  ", s.icon()),
-            Style::new().fg(status_color(s)),
+            format!(" {label} "),
+            Style::new().fg(fg()).bg(sel_bg()).bold(),
         )
     };
-    f.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                Span::raw(" "),
-                legend_line(Status::Working, "trabalhando"),
-                legend_line(Status::Approval, "aprovação"),
-            ]),
-            Line::from(vec![
-                Span::raw(" "),
-                legend_line(Status::Yours, "sua vez"),
-                legend_line(Status::Error, "erro"),
-                legend_line(Status::Suspended, "suspensa"),
-                Span::styled("⚠ colisão", Style::new().fg(collision_color())),
-            ]),
-        ]),
-        legend,
-    );
+    let mut spans = Vec::new();
+    let mut x = buttons.x + 1;
+    spans.push(Span::raw(" "));
+    for (label, zone) in [
+        ("+ Sessão", Zone::NewSession),
+        ("+ Projeto", Zone::NewProject),
+        ("? Ajuda", Zone::Help),
+    ] {
+        let w = label.chars().count() as u16 + 2;
+        if x + w > buttons.right() {
+            break;
+        }
+        zones.push((Rect::new(x, buttons.y, w, 1), zone));
+        x += w + 1;
+        spans.push(button(label));
+        spans.push(Span::raw(" "));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), buttons);
 }
 
 /// Detalhes da sessão (`i`), em zoom: o painel antigo sem o preview, já que
@@ -784,11 +826,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     if app.view != View::Summary {
         for (key, label) in [
-            ("clique/j/k", "sessão"),
-            ("Enter", "foca"),
-            ("^q", "volta"),
-            ("n", "nova"),
-            ("?", "ajuda"),
+            ("Enter", "digitar"),
+            ("i", "detalhes"),
+            ("Tab", "aba"),
             ("q", "sair"),
         ] {
             spans.extend(k(key, label));
@@ -1276,13 +1316,17 @@ fn draw_modal(f: &mut Frame, app: &App) {
         }
         Modal::Details => {}
         Modal::Help => {
-            let r = centered(area, 66, 28);
+            let r = centered(area, 70, 31);
             f.render_widget(Clear, r);
             let rows = [
+                (
+                    "clique",
+                    "seleciona na árvore; no painel da direita, digita nele",
+                ),
                 ("j/k ↑/↓", "navegar"),
                 ("h/l ←/→", "recolher / expandir projeto"),
-                ("Enter", "entrar na sessão (retoma se suspensa)"),
-                ("Ctrl-q", "dentro da sessão: voltar ao ccdeck"),
+                ("Enter", "digitar na sessão (retoma se suspensa)"),
+                ("Ctrl-q", "na sessão: volta à árvore; na árvore: desconecta"),
                 ("y / x", "aprovar / recusar o pedido pendente"),
                 ("m", "responder sem entrar na sessão"),
                 ("D", "diff completo da sessão"),
@@ -1302,7 +1346,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("d", "remover sessão ou projeto vazio"),
                 ("q", "sair — as sessões continuam rodando"),
             ];
-            let lines: Vec<Line> = rows
+            let mut lines: Vec<Line> = rows
                 .iter()
                 .map(|(k, v)| {
                     Line::from(vec![
@@ -1311,6 +1355,25 @@ fn draw_modal(f: &mut Frame, app: &App) {
                     ])
                 })
                 .collect();
+            let mut legend = vec![Span::raw(" ")];
+            for st in [
+                Status::Working,
+                Status::Approval,
+                Status::Yours,
+                Status::Error,
+                Status::Suspended,
+            ] {
+                legend.push(Span::styled(
+                    format!("{} {}  ", st.icon(), st.short()),
+                    Style::new().fg(status_color(st)),
+                ));
+            }
+            legend.push(Span::styled(
+                "⚠ colisão",
+                Style::new().fg(collision_color()),
+            ));
+            lines.insert(0, Line::from(legend));
+            lines.insert(1, Line::raw(""));
             f.render_widget(
                 Paragraph::new(lines).block(modal_block("Atalhos".into(), accent())),
                 r,

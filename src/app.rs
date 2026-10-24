@@ -275,6 +275,16 @@ pub struct Flash {
     at: Instant,
 }
 
+/// Alvo de um clique fora da lista.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zone {
+    Tab(View),
+    Filter,
+    NewSession,
+    NewProject,
+    Help,
+}
+
 pub struct App {
     pub paths: Paths,
     pub config: Config,
@@ -307,6 +317,10 @@ pub struct App {
     pub ui: Option<UiMode>,
     /// Área da lista da barra e deslocamento, gravados no desenho (para o mouse).
     pub list_geom: std::cell::Cell<(ratatui::layout::Rect, usize)>,
+    /// Abas e botões clicáveis da barra, gravados no desenho.
+    pub click_zones: std::cell::RefCell<Vec<(ratatui::layout::Rect, Zone)>>,
+    /// A barra tem o foco do teclado (eventos de foco do tmux).
+    pub focused: bool,
     /// Ação de entrega em andamento.
     pub runner: crate::delivery::Runner,
     /// Último estado visto da verificação de cada sessão (para avisar ao terminar).
@@ -354,6 +368,8 @@ impl App {
             ci: Default::default(),
             ui: None,
             list_geom: Default::default(),
+            click_zones: Default::default(),
+            focused: true,
             runner: Default::default(),
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
@@ -1041,6 +1057,7 @@ impl App {
 
     /// Liga o modo integrado; `sidebar` é o painel desta TUI.
     pub fn enable_ui(&mut self, sidebar: String) {
+        self.tmux.style_deck();
         let shown = self.tmux.ui_option("@ccdeck_shown");
         self.ui = Some(UiMode {
             sidebar,
@@ -1150,6 +1167,29 @@ impl App {
     /// Clique na barra: seleciona a linha (projeto já selecionado recolhe/expande).
     pub fn click(&mut self, col: u16, row: u16) {
         if !matches!(self.modal, Modal::None) {
+            return;
+        }
+        let hit = |r: &ratatui::layout::Rect| {
+            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        };
+        let zone = self
+            .click_zones
+            .borrow()
+            .iter()
+            .find(|(r, _)| hit(r))
+            .map(|(_, z)| *z);
+        if let Some(z) = zone {
+            match z {
+                Zone::Tab(v) => {
+                    self.view = v;
+                    self.cursor = 0;
+                    self.summary_at = None;
+                }
+                Zone::Filter => self.modal = Modal::Filter,
+                Zone::NewSession => self.open_new_session(),
+                Zone::NewProject => self.open_new_project(),
+                Zone::Help => self.modal = Modal::Help,
+            }
             return;
         }
         let (area, offset) = self.list_geom.get();
@@ -1638,6 +1678,13 @@ impl App {
             .position(|i| *i == Item::Project(self.state.projects.len() - 1))
             .unwrap_or(0);
         Ok(())
+    }
+
+    pub fn open_new_project(&mut self) {
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        self.modal = Modal::NewProject(TextInput::new(cwd));
     }
 
     pub fn open_new_session(&mut self) {
@@ -2407,12 +2454,7 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') => self.set_collapsed(false),
             KeyCode::Enter => self.enter(),
             KeyCode::Char('n') => self.open_new_session(),
-            KeyCode::Char('N') => {
-                let cwd = std::env::current_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                self.modal = Modal::NewProject(TextInput::new(cwd));
-            }
+            KeyCode::Char('N') => self.open_new_project(),
             KeyCode::Char('a') => {
                 self.view = if self.view == View::Attention {
                     View::Tree

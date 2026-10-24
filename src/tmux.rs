@@ -85,6 +85,9 @@ set -g remain-on-exit off
 bind -n C-q if-shell -F "#{&&:#{==:#{session_name},ccdeck-ui},#{!=:#{pane_index},0}}" "select-pane -t :.0" "detach-client"
 "##;
 
+/// Título da borda: a barra não tem; na sessão, diz se o teclado está nela.
+const DECK_BORDER: &str = "#{?#{==:#{pane_index},0},,#{?pane_active,#[fg=#0b0e13#,bg=#5fd7af#,bold] ⌨ digitando aqui · Ctrl-q volta à árvore #[default], clique aqui ou Enter para digitar }}";
+
 #[derive(Debug, Clone)]
 pub struct Tmux {
     conf: PathBuf,
@@ -240,6 +243,20 @@ impl Tmux {
         ])?;
         self.resize_sidebar(sidebar);
         Ok(())
+    }
+
+    /// Borda da janela do modo integrado: o painel com o teclado fica aceso
+    /// e o título diz como voltar.
+    pub fn style_deck(&self) {
+        let w = format!("={UI_SESSION}:deck");
+        for (opt, val) in [
+            ("pane-border-status", "top"),
+            ("pane-border-style", "fg=#2a313c"),
+            ("pane-active-border-style", "fg=#5fd7af"),
+            ("pane-border-format", DECK_BORDER),
+        ] {
+            let _ = self.run(&["set-option", "-w", "-t", &w, opt, val]);
+        }
     }
 
     pub fn resize_sidebar(&self, sidebar: &str) {
