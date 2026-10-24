@@ -15,13 +15,18 @@ O fim de uma sessão é sempre igual: commitar o que ficou, subir o branch, abri
    - **PR**: `gh pr create --base <base> --head <branch> --title <título> --body <notas da sessão>` (título editável).
 3. **Toda ação que sai da máquina (push, PR) pede confirmação explícita** mostrando branch, destino (URL do `origin`) e título; o commit também mostra a lista de arquivos antes. As ações rodam em segundo plano e o resultado (ou o erro do `git`/`gh`, inteiro) aparece no modal (invariante 7).
 4. **CI**: a cada 60 s, uma chamada `gh pr list --state open --json …` por projeto que tem sessões com branch. O PR é ligado à sessão por `headRefName == branch`. Nada é persistido (o `state.json` não muda). O painel mostra `PR #12 ✓` (tudo verde), `✕ n` (falhas), `… n` (rodando) ou `PR #12` (sem checks).
-   - [inferência] Itens do `statusCheckRollup`: `CheckRun` com `status`/`conclusion` e `StatusContext` com `state`. Falha = `conclusion` em FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE ou `state` em FAILURE, ERROR; rodando = `status` diferente de COMPLETED ou `state` PENDING/EXPECTED. Campos desconhecidos são ignorados.
+   - [confirmado] Itens do `statusCheckRollup` de GitHub Actions são `CheckRun` com `status` (`IN_PROGRESS`, `COMPLETED`) e `conclusion` (`""` enquanto roda; `SUCCESS`, `FAILURE`). Validado em 2026-10-23 no PR #1 de `edsonmartins/ccdeck-teste-entrega` (repositório público de teste) com um job que passa e outro que falha: o painel mostrou `PR #1 ✕ 1`. [inferência] `StatusContext` (status de commit de integrações antigas) vem com `state`. Regra: falha = `conclusion` em FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE ou `state` em FAILURE, ERROR; rodando = `status` diferente de COMPLETED ou `state` PENDING/EXPECTED. Campos desconhecidos são ignorados.
    - Erro do `gh` (sem remoto GitHub, sem login) fica guardado por projeto e aparece no modal de entrega, sem repetir aviso a cada 60 s.
 
 ## Alternativas
 - **API REST do GitHub com token próprio**: segredo a guardar e mais superfície. Rejeitado.
 - **Persistir o número do PR na sessão**: exigiria `schema_version` 3 sem ganho, já que o branch identifica o PR. Rejeitado.
 - **Merge pelo ccdeck**: fora do escopo; revisão e merge continuam no GitHub.
+
+## Validação (2026-10-23)
+- [confirmado] Pelo ccdeck, num repositório público de teste: commit, `git push -u origin ccdeck/entrega-real` e `gh pr create` com confirmação; o PR apareceu no modal e no painel logo na consulta seguinte.
+- [confirmado] Logo depois de criado, o PR ainda não tem checks (`PR #1` sem ícone); eles aparecem em segundos, e o painel atualiza em até 60 s.
+- [confirmado] Integrações do usuário entram no rollup (ex.: GitGuardian), e contam como qualquer outro check.
 
 ## Consequências
 - Funciona com qualquer remoto para commit/push; PR e CI só com GitHub e `gh` autenticado.

@@ -17,4 +17,4 @@
 ## 4. Verificação
 - [x] 4.1 Testes de parse e CI
 - [x] 4.2 Fluxo com remoto local e `fake-gh.sh`
-- [ ] 4.3 Fluxo real num repositório GitHub de teste (com autorização)
+- [x] 4.3 Fluxo real num repositório GitHub de teste (com autorização)

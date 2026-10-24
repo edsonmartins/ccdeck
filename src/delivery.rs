@@ -316,6 +316,21 @@ mod tests {
     }
 
     #[test]
+    fn ci_com_formato_real_do_github() {
+        // Capturado do gh 2.97 no PR de teste (ADR-0017, tarefa 4.3).
+        let rodando = r#"[{"number":1,"headRefName":"ccdeck/entrega-real","statusCheckRollup":[
+            {"__typename":"CheckRun","name":"passa","status":"IN_PROGRESS","conclusion":""},
+            {"__typename":"CheckRun","name":"falha","status":"IN_PROGRESS","conclusion":""},
+            {"__typename":"CheckRun","name":"GitGuardian Security Checks","status":"COMPLETED","conclusion":"SUCCESS"}]}]"#;
+        let fim = r#"[{"number":1,"headRefName":"ccdeck/entrega-real","statusCheckRollup":[
+            {"__typename":"CheckRun","name":"passa","status":"COMPLETED","conclusion":"SUCCESS"},
+            {"__typename":"CheckRun","name":"falha","status":"COMPLETED","conclusion":"FAILURE"},
+            {"__typename":"CheckRun","name":"GitGuardian Security Checks","status":"COMPLETED","conclusion":"SUCCESS"}]}]"#;
+        assert_eq!(parse_prs(rodando).unwrap()[0].ci, Ci::Pending(2));
+        assert_eq!(parse_prs(fim).unwrap()[0].ci, Ci::Failing(1));
+    }
+
+    #[test]
     fn parse_da_lista_de_prs() {
         let j = r#"[{"number":12,"url":"https://github.com/o/r/pull/12","headRefName":"ccdeck/add-x","title":"Add X",
                      "statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]},
