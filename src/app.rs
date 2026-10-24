@@ -47,6 +47,17 @@ pub struct Runtime {
     pub record: Option<StatusRecord>,
 }
 
+/// Modo integrado (ADR-0018): esta TUI é a barra lateral de `ccdeck-ui`.
+#[derive(Debug, Clone)]
+pub struct UiMode {
+    /// Painel tmux da barra lateral (`$TMUX_PANE`).
+    pub sidebar: String,
+    /// Sessão (nome tmux) cujo painel está emprestado à direita.
+    pub shown: Option<String>,
+    /// Zoom pedido por uma tela suspensa (diff, log).
+    pub shell_zoom: bool,
+}
+
 /// O que o modal de entrega mostra (ADR-0017).
 #[derive(Debug, Clone)]
 pub struct DeliverInfo {
@@ -292,6 +303,10 @@ pub struct App {
     summary_at: Option<Instant>,
     /// PRs abertos e CI por projeto (ADR-0017).
     pub ci: crate::delivery::CiScanner,
+    /// `Some` no modo integrado (ADR-0018).
+    pub ui: Option<UiMode>,
+    /// Área da lista da barra e deslocamento, gravados no desenho (para o mouse).
+    pub list_geom: std::cell::Cell<(ratatui::layout::Rect, usize)>,
     /// Ação de entrega em andamento.
     pub runner: crate::delivery::Runner,
     /// Último estado visto da verificação de cada sessão (para avisar ao terminar).
@@ -312,6 +327,7 @@ impl App {
         let state = store::load_state(&paths)?;
         crate::hook::write_settings(&paths, exe)?;
         let tmux = Tmux::new(paths.tmux_conf())?;
+        tmux.tag_legacy();
         let mut app = Self {
             paths,
             config,
@@ -337,6 +353,8 @@ impl App {
             summary_at: None,
             verify_seen: HashMap::new(),
             ci: Default::default(),
+            ui: None,
+            list_geom: Default::default(),
             runner: Default::default(),
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
@@ -463,7 +481,11 @@ impl App {
 
     pub fn tick(&mut self) {
         self.refresh();
-        self.update_preview();
+        if self.ui.is_some() {
+            self.ui_sync();
+        } else {
+            self.update_preview();
+        }
         self.update_changes();
         self.update_usage();
         self.update_summary();
@@ -1018,6 +1040,152 @@ impl App {
         self.log_action(&s, "responder", text);
         self.info(format!("resposta enviada a {}", s.name));
         Ok(())
+    }
+
+    // --- modo integrado (ADR-0018) ------------------------------------------
+
+    /// Liga o modo integrado; `sidebar` é o painel desta TUI.
+    pub fn enable_ui(&mut self, sidebar: String) {
+        let shown = self.tmux.ui_option("@ccdeck_shown");
+        self.ui = Some(UiMode {
+            sidebar,
+            shown,
+            shell_zoom: false,
+        });
+        self.last_list = None;
+        self.refresh();
+    }
+
+    /// Mantém o painel da direita e o zoom coerentes com a seleção.
+    fn ui_sync(&mut self) {
+        let Some(ui) = self.ui.clone() else {
+            return;
+        };
+        // A sessão mostrada morreu: o painel de espera volta para a direita.
+        if self.tmux.deck_panes().len() < 2 {
+            let r = match self.tmux.placeholder() {
+                Some(ph) => self.tmux.join_right(&ph, &ui.sidebar),
+                None => self.tmux.new_placeholder(&ui.sidebar),
+            };
+            if let Err(e) = r {
+                self.error(format!("modo integrado: {e:#}"));
+            }
+            self.set_shown(None);
+            self.last_list = None;
+        }
+        if let Some(name) = self
+            .selected_session()
+            .map(Session::tmux_name)
+            .filter(|n| self.alive.contains(n))
+            && self.ui.as_ref().and_then(|u| u.shown.as_ref()) != Some(&name)
+            && let Err(e) = self.show(&name)
+        {
+            self.error(format!("não foi possível mostrar a sessão: {e:#}"));
+        }
+        // Telas largas (modais, Resumo, diff) usam a janela inteira.
+        let want =
+            !matches!(self.modal, Modal::None) || self.view == View::Summary || ui.shell_zoom;
+        if want != self.tmux.zoomed(&ui.sidebar) {
+            self.tmux.toggle_zoom(&ui.sidebar);
+        }
+    }
+
+    fn set_shown(&mut self, name: Option<String>) {
+        self.tmux.set_ui_option("@ccdeck_shown", name.as_deref());
+        if let Some(ui) = &mut self.ui {
+            ui.shown = name;
+        }
+    }
+
+    /// Traz o painel da sessão para a direita, devolvendo antes o anterior.
+    pub fn show(&mut self, name: &str) -> Result<()> {
+        self.unshow()?;
+        let ph = self.tmux.placeholder().context("painel de espera sumiu")?;
+        let pane = self
+            .tmux
+            .pane_of(name)
+            .context("a sessão não está rodando")?;
+        self.tmux.swap(&ph, &pane)?;
+        self.set_shown(Some(name.to_string()));
+        Ok(())
+    }
+
+    /// Devolve o painel emprestado para a janela de origem.
+    pub fn unshow(&mut self) -> Result<()> {
+        let Some(prev) = self.ui.as_ref().and_then(|u| u.shown.clone()) else {
+            return Ok(());
+        };
+        if let (Some(ph), Some(pane)) = (self.tmux.placeholder(), self.tmux.pane_of(&prev)) {
+            self.tmux.swap(&pane, &ph)?;
+        }
+        self.set_shown(None);
+        Ok(())
+    }
+
+    /// Mostra a sessão e põe o foco no painel da direita.
+    fn focus_session(&mut self, name: &str) {
+        self.last_list = None;
+        self.refresh();
+        match self.show(name) {
+            Ok(()) => {
+                if let Some(pane) = self.tmux.pane_of(name) {
+                    self.tmux.select_pane(&pane);
+                }
+            }
+            Err(e) => self.error(format!("não foi possível mostrar a sessão: {e:#}")),
+        }
+    }
+
+    /// Ao sair do modo integrado: devolve o painel e fecha `ccdeck-ui`.
+    pub fn leave_ui(&mut self) {
+        let _ = self.unshow();
+        self.tmux.kill_ui();
+    }
+
+    pub fn set_shell_zoom(&mut self, on: bool) {
+        if let Some(ui) = &mut self.ui {
+            ui.shell_zoom = on;
+            let sidebar = ui.sidebar.clone();
+            if on != self.tmux.zoomed(&sidebar) {
+                self.tmux.toggle_zoom(&sidebar);
+            }
+        }
+    }
+
+    /// Clique na barra: seleciona a linha (projeto já selecionado recolhe/expande).
+    pub fn click(&mut self, col: u16, row: u16) {
+        if !matches!(self.modal, Modal::None) {
+            return;
+        }
+        let (area, offset) = self.list_geom.get();
+        if row < area.y || row >= area.y + area.height || col < area.x || col >= area.x + area.width
+        {
+            return;
+        }
+        let idx = offset + (row - area.y) as usize;
+        let items = self.items();
+        if idx >= items.len() {
+            return;
+        }
+        if idx == self.cursor
+            && let Item::Project(_) = items[idx]
+        {
+            self.enter();
+        }
+        self.cursor = idx;
+    }
+
+    /// Roda do mouse na barra.
+    pub fn scroll(&mut self, down: bool) {
+        if !matches!(self.modal, Modal::None) {
+            return;
+        }
+        let n = self.items().len();
+        self.cursor = if down {
+            (self.cursor + 1).min(n.saturating_sub(1))
+        } else {
+            self.cursor.saturating_sub(1)
+        };
     }
 
     /// Consulta os PRs abertos dos projetos com sessões em branch (ADR-0017).
@@ -1685,7 +1853,12 @@ impl App {
         if let Some(pos) = self.items().iter().position(|i| *i == Item::Session(idx)) {
             self.cursor = pos;
         }
-        self.pending_attach = Some(self.state.sessions[idx].tmux_name());
+        let name = self.state.sessions[idx].tmux_name();
+        if self.ui.is_some() {
+            self.focus_session(&name);
+        } else {
+            self.pending_attach = Some(name);
+        }
         Ok(())
     }
 
@@ -1790,7 +1963,11 @@ impl App {
                     self.error(format!("não foi possível retomar: {e:#}"));
                     return;
                 }
-                self.pending_attach = Some(name);
+                if self.ui.is_some() {
+                    self.focus_session(&name);
+                } else {
+                    self.pending_attach = Some(name);
+                }
             }
             None => self.info("nada selecionado — N cadastra um projeto"),
         }
@@ -1847,6 +2024,10 @@ impl App {
             if s.cwd.exists() {
                 git::worktree_remove(&repo, &s.cwd, option == 3)?;
             }
+        }
+        // Painel emprestado à direita: volta para casa antes de matar a sessão.
+        if self.ui.as_ref().and_then(|u| u.shown.as_deref()) == Some(s.tmux_name().as_str()) {
+            let _ = self.unshow();
         }
         if self.alive.contains(&s.tmux_name()) {
             let _ = self.tmux.kill(&s.tmux_name());

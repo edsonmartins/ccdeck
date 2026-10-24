@@ -68,6 +68,14 @@ pub fn draw(f: &mut Frame, app: &App) {
     ])
     .areas(f.area());
     draw_header(f, app, header);
+    // Modo integrado (ADR-0018): este painel é só a barra; a sessão está ao lado.
+    // Com zoom (modais, Resumo) desenha como sempre.
+    if app.ui.is_some() && body.width < 80 {
+        draw_ui_bar(f, app, body);
+        draw_footer(f, app, footer);
+        draw_modal(f, app);
+        return;
+    }
     let [side, main] =
         Layout::horizontal([Constraint::Length(42), Constraint::Fill(1)]).areas(body);
     draw_sidebar(f, app, side);
@@ -78,6 +86,74 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     draw_footer(f, app, footer);
     draw_modal(f, app);
+}
+
+/// Barra lateral do modo integrado: árvore + cartão da sessão selecionada.
+fn draw_ui_bar(f: &mut Frame, app: &App, area: Rect) {
+    let card_h = if app.selected_session().is_some() {
+        9
+    } else {
+        0
+    };
+    let [tree, card] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(card_h)]).areas(area);
+    draw_sidebar(f, app, tree);
+    let Some(s) = app.selected_session() else {
+        return;
+    };
+    let st = app.status_of(s);
+    let w = card.width.saturating_sub(2) as usize;
+    let block = rounded(status_color(st)).title(Span::styled(
+        format!(" {} {} ", st.icon(), st.label()),
+        Style::new().fg(status_color(st)).bold(),
+    ));
+    let inner = block.inner(card);
+    f.render_widget(block, card);
+    let mut lines = vec![Line::styled(
+        truncate(&branch_with_pr(app, s), w),
+        Style::new().fg(fg()),
+    )];
+    let pending = app
+        .runtime
+        .get(&s.id)
+        .and_then(|r| r.record.as_ref())
+        .and_then(|r| r.pending.clone())
+        .filter(|_| st == Status::Approval);
+    if let Some(p) = pending {
+        lines.push(Line::styled(
+            truncate(&format!("▲ {}: {}", p.tool, p.summary), w),
+            Style::new().fg(status_color(Status::Approval)),
+        ));
+        lines.push(Line::from(vec![
+            Span::styled("y", Style::new().fg(accent()).bold()),
+            Span::raw(" aprovar  "),
+            Span::styled("x", Style::new().fg(status_color(Status::Error)).bold()),
+            Span::raw(" recusar"),
+        ]));
+    } else if let Some(m) = app.last_message(s) {
+        let first = m
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .to_string();
+        lines.push(Line::styled(truncate(&first, w), Style::new().fg(muted())));
+    }
+    if let Some((c, hot)) = context_line(app, &s.id) {
+        let color = if hot {
+            status_color(Status::Approval)
+        } else {
+            muted()
+        };
+        lines.push(Line::styled(truncate(&c, w), Style::new().fg(color)));
+    }
+    if let Some(u) = compact_usage(app, &s.id) {
+        lines.push(Line::styled(truncate(&u, w), Style::new().fg(muted())));
+    }
+    lines.push(Line::styled(
+        truncate(&format!("verificação: {}", verify_text(app, s)), w),
+        Style::new().fg(muted()),
+    ));
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
@@ -107,8 +183,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
+    // No modo integrado o separador é o do tmux (ADR-0018).
+    let borders = if app.ui.is_some() && area.width < 80 {
+        Borders::NONE
+    } else {
+        Borders::RIGHT
+    };
     let block = Block::new()
-        .borders(Borders::RIGHT)
+        .borders(borders)
         .border_style(Style::new().fg(border()));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -159,6 +241,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let items = app.items();
     let height = list.height as usize;
     let offset = app.cursor.saturating_sub(height.saturating_sub(1));
+    app.list_geom.set((list, offset));
     let width = list.width as usize;
     let mut lines: Vec<Line> = Vec::new();
     if items.is_empty() {
@@ -715,6 +798,25 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ]
     };
     let mut spans = Vec::new();
+    if app.ui.is_some() && area.width < 80 {
+        for (key, label) in [
+            ("clique/j/k", "sessão"),
+            ("Enter", "foca"),
+            ("^q", "volta"),
+            ("n", "nova"),
+            ("?", "ajuda"),
+            ("q", "sair"),
+        ] {
+            spans.extend(k(key, label));
+        }
+        f.render_widget(
+            Paragraph::new(Line::from(spans))
+                .bg(panel())
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
     if app.view == View::Summary {
         for (key, label) in [
             ("Tab", "próxima aba"),

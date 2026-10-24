@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEventKind};
 
 use crate::app::App;
 use crate::paths::Paths;
@@ -51,6 +51,8 @@ enum Cmd {
     Doctor,
     /// Cria um `.ccdeck.json` de exemplo no diretório (padrão: o atual).
     InitProject { dir: Option<std::path::PathBuf> },
+    /// Modo integrado (protótipo, ADR-0018): árvore à esquerda, sessão à direita.
+    Ui,
 }
 
 fn main() -> Result<()> {
@@ -74,11 +76,42 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
-        None => run_tui(paths),
+        Some(Cmd::Ui) => match std::env::var("CCDECK_UI_PANE") {
+            // Já dentro de `ccdeck-ui`: esta é a barra lateral.
+            Ok(_) => run_tui(paths, std::env::var("TMUX_PANE").ok()),
+            Err(_) => open_ui(&paths),
+        },
+        None => run_tui(paths, None),
     }
 }
 
-fn run_tui(paths: Paths) -> Result<()> {
+/// Cria (ou reaproveita) a sessão `ccdeck-ui` e entra nela (ADR-0018).
+fn open_ui(paths: &Paths) -> Result<()> {
+    for bin in ["tmux", "git"] {
+        if which(bin).is_none() {
+            bail!("{bin} não encontrado no PATH — rode `ccdeck doctor`");
+        }
+    }
+    let t = tmux::Tmux::new(paths.tmux_conf())?;
+    if !t.ui_exists() {
+        let exe = std::env::current_exe()?;
+        let cmd = format!("{} ui", hook::shell_quote(&exe.to_string_lossy()));
+        let mut env = vec![("CCDECK_UI_PANE".to_string(), "1".to_string())];
+        if let Some(home) = &paths.home {
+            env.push(("CCDECK_HOME".into(), home.to_string_lossy().to_string()));
+        }
+        if let Ok(sock) = std::env::var("CCDECK_TMUX_SOCKET") {
+            env.push(("CCDECK_TMUX_SOCKET".into(), sock));
+        }
+        let (cols, rows) = ratatui::crossterm::terminal::size().unwrap_or((200, 50));
+        t.ui_create(&cmd, &env, cols, rows)?;
+    }
+    t.attach_ui()?;
+    Ok(())
+}
+
+/// `sidebar` = painel tmux da barra no modo integrado (ADR-0018).
+fn run_tui(paths: Paths, sidebar: Option<String>) -> Result<()> {
     for bin in ["tmux", "git"] {
         if which(bin).is_none() {
             bail!("{bin} não encontrado no PATH — rode `ccdeck doctor`");
@@ -86,26 +119,51 @@ fn run_tui(paths: Paths) -> Result<()> {
     }
     let exe = std::env::current_exe()?;
     let mut app = App::new(paths, &exe)?;
+    let ui = sidebar.is_some();
+    if let Some(pane) = sidebar {
+        app.enable_ui(pane);
+    }
+    let mouse = |on: bool| {
+        if ui {
+            use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+            let _ = if on {
+                ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+            } else {
+                ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+            };
+        }
+    };
     let mut terminal = ratatui::init();
+    mouse(true);
     let result = (|| -> Result<()> {
         loop {
             app.tick();
             terminal.draw(|f| ui::draw(f, &app))?;
-            if event::poll(Duration::from_millis(250))?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                app.handle_key(key);
+            if event::poll(Duration::from_millis(250))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                    Event::Mouse(m) => match m.kind {
+                        MouseEventKind::Down(MouseButton::Left) => app.click(m.column, m.row),
+                        MouseEventKind::ScrollDown => app.scroll(true),
+                        MouseEventKind::ScrollUp => app.scroll(false),
+                        _ => {}
+                    },
+                    _ => {}
+                }
             }
             if let Some(name) = app.pending_attach.take() {
+                mouse(false);
                 ratatui::restore();
                 let window = app.pending_window.take();
                 let r = app.tmux.attach(&name, window.as_deref());
                 terminal = ratatui::init();
                 terminal.clear()?;
+                mouse(true);
                 app.after_attach(r);
             }
             if let Some((dir, cmd)) = app.pending_shell.take() {
+                mouse(false);
+                app.set_shell_zoom(true);
                 ratatui::restore();
                 let mut c = Command::new("sh");
                 c.args(["-c", &cmd]).current_dir(&dir);
@@ -115,6 +173,8 @@ fn run_tui(paths: Paths) -> Result<()> {
                 let r = c.status();
                 terminal = ratatui::init();
                 terminal.clear()?;
+                mouse(true);
+                app.set_shell_zoom(false);
                 if let Err(e) = r {
                     app.error(format!("falha ao rodar {cmd}: {e}"));
                 }
@@ -124,7 +184,11 @@ fn run_tui(paths: Paths) -> Result<()> {
             }
         }
     })();
+    mouse(false);
     ratatui::restore();
+    if ui && app.quit {
+        app.leave_ui();
+    }
     result
 }
 
@@ -176,7 +240,7 @@ fn doctor(paths: &Paths) -> Result<()> {
     println!("estado  {}", paths.state_file.display());
     println!("hooks   {}", paths.hooks_file().display());
     println!("status  {}", paths.status_dir().display());
-    println!("tmux    tmux -L {} (sessões do deck)", tmux::SOCKET);
+    println!("tmux    tmux -L {} (sessões do deck)", tmux::socket());
     usage_report(paths, &cfg);
     if !missing.is_empty() {
         bail!("dependências faltando: {}", missing.join(", "));

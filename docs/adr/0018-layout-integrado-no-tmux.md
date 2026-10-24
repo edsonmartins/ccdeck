@@ -19,6 +19,10 @@ No uso real, entrar numa sessão troca a tela inteira: a árvore some e volta s�
 - [confirmado] Se o painel mostrado morre, `join-pane` devolve o painel de espera para a direita e a sessão de origem, vazia, some sozinha.
 - [confirmado] `if-shell -F "#{==:#{session_name},…}"` permite `Ctrl-q` diferente dentro de `ccdeck-ui`.
 
+## Protótipo (2026-10-24)
+- [confirmado] `ccdeck ui` num servidor isolado (`CCDECK_TMUX_SOCKET`) com o claude falso: criar projeto e sessões pela barra (modal com zoom), sessão nova aparece à direita com foco; clique de mouse (sequência SGR) na barra troca a sessão mostrada e devolve a anterior; `y` na barra aprova a sessão emprestada (alvo pela marca); sessão mostrada que morre libera a direita e vira *Suspensa*; `Enter` retoma e mostra; `Ctrl-q` na direita volta à barra, na barra desconecta; `q` devolve o painel e fecha `ccdeck-ui`.
+- [confirmado] Risco: fechar `ccdeck-ui` à força (`tmux kill-session`, `kill-server`) com uma sessão emprestada mata o Claude Code dela, porque o painel está lá. O `q` do ccdeck devolve antes de fechar.
+
 ## Alternativas
 - **Emulador dentro do ratatui (`vt100`/`tui-term`)**: fidelidade parcial com a TUI do Claude Code. Rejeitado (ADR-0001).
 - **App gráfico (Tauri + xterm.js)**: reescrita e perda do uso por SSH. Rejeitado por ora.
