@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, Item, Modal, SetupState, View, ago};
 use crate::input::Field;
-use crate::model::{PERMISSION_MODES, Status};
+use crate::model::{PERMISSION_MODES, Status, permission_mode_label};
 
 fn no_color() -> bool {
     static NC: OnceLock<bool> = OnceLock::new();
@@ -382,7 +382,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         [
             kv("Diretório", wt),
             kv("Setup do worktree", setup),
-            kv("Modo de permissão", s.permission_mode.clone()),
+            kv(
+                "Modo de permissão",
+                permission_mode_label(&s.permission_mode).to_string(),
+            ),
         ],
         [
             kv("No estado há", since),
@@ -885,6 +888,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 .iter()
                 .enumerate()
                 .map(|(i, m)| {
+                    let m = permission_mode_label(m);
                     if i == form.mode {
                         format!("(•) {m}")
                     } else {

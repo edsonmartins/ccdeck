@@ -176,6 +176,16 @@ impl Default for Config {
 
 pub const PERMISSION_MODES: [&str; 4] = ["default", "acceptEdits", "plan", "auto"];
 
+/// Rótulo na UI. `default` não passa `--permission-mode`, então vale o
+/// `defaultMode` das settings do usuário (validacao-v0.2.md §6).
+pub fn permission_mode_label(mode: &str) -> &str {
+    if mode == PERMISSION_MODES[0] {
+        "padrão das suas settings"
+    } else {
+        mode
+    }
+}
+
 /// Último evento recebido de um hook, gravado em `status/<sid>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StatusRecord {
