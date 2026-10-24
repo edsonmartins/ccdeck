@@ -22,6 +22,7 @@ use crate::paths::Paths;
 use crate::project::{self, ProjectConfig};
 use crate::store;
 use crate::tmux::{SETUP_WINDOW, Tmux};
+use crate::usage::{self, UsageScanner};
 
 const LIST_EVERY: Duration = Duration::from_secs(2);
 /// Tempo mínimo que um pedido precisa ficar na tela antes de `y`/`x` (ADR-0007).
@@ -101,6 +102,8 @@ pub struct App {
     /// Comando a rodar com a TUI suspensa (diff completo): (diretório, comando).
     pub pending_shell: Option<(PathBuf, String)>,
     pub scanner: Scanner,
+    /// Uso de tokens por sessão, indexado em segundo plano (ADR-0010).
+    pub usage: UsageScanner,
     /// Sessão → arquivo → outras sessões que alteraram o mesmo arquivo.
     pub collisions: HashMap<String, BTreeMap<String, Vec<String>>>,
     /// id do pedido → quando apareceu na tela pela primeira vez.
@@ -134,12 +137,15 @@ impl App {
             pending_attach: None,
             pending_shell: None,
             scanner: Scanner::default(),
+            usage: UsageScanner::default(),
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
             msg_cache: HashMap::new(),
             last_list: None,
             initialized: false,
         };
+        let ids: Vec<String> = app.state.sessions.iter().map(|s| s.id.clone()).collect();
+        app.usage.preload(&app.paths, &ids);
         app.refresh();
         app.initialized = true;
         Ok(app)
@@ -252,6 +258,7 @@ impl App {
         self.refresh();
         self.update_preview();
         self.update_changes();
+        self.update_usage();
         self.mark_seen_pending();
         self.update_last_message();
         if let Some(f) = &self.flash
@@ -267,6 +274,45 @@ impl App {
             cwd: s.cwd.clone(),
             base: s.base.clone(),
         }
+    }
+
+    /// Agenda a indexação de uso de todas as sessões (ADR-0010).
+    fn update_usage(&mut self) {
+        self.usage.collect();
+        for s in &self.state.sessions {
+            if let Some(t) = self
+                .runtime
+                .get(&s.id)
+                .and_then(|r| r.record.as_ref())
+                .and_then(|r| r.transcript_path.as_ref())
+            {
+                self.usage
+                    .transcripts
+                    .insert(s.id.clone(), PathBuf::from(t));
+            }
+        }
+        if self.usage.busy()
+            || self
+                .usage
+                .last
+                .is_some_and(|t| t.elapsed() < changes::ALL_EVERY)
+        {
+            return;
+        }
+        let jobs = self
+            .state
+            .sessions
+            .iter()
+            .filter_map(|s| {
+                let t = self.usage.transcripts.get(&s.id)?;
+                Some(usage::Job {
+                    session: s.id.clone(),
+                    transcript: t.clone(),
+                })
+            })
+            .collect();
+        self.usage.spawn(&self.paths, jobs);
+        self.usage.last = Some(Instant::now());
     }
 
     /// Agenda varreduras de alterações e recalcula colisões (ADR-0009).
@@ -1004,6 +1050,9 @@ impl App {
         let _ = std::fs::remove_file(exit);
         self.runtime.remove(&s.id);
         self.scanner.results.remove(&s.id);
+        self.usage.hours.remove(&s.id);
+        self.usage.transcripts.remove(&s.id);
+        usage::remove(&self.paths, &s.id);
         self.state.sessions.remove(idx);
         self.collisions = changes::collisions(&self.state.sessions, &self.scanner.results);
         self.save();

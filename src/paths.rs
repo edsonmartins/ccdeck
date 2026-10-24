@@ -56,6 +56,13 @@ impl Paths {
     pub fn status_file(&self, session_id: &str) -> PathBuf {
         self.status_dir().join(format!("{session_id}.json"))
     }
+
+    /// Índice de uso da sessão (ADR-0010).
+    pub fn usage_file(&self, session_id: &str) -> PathBuf {
+        self.state_dir
+            .join("usage")
+            .join(format!("{session_id}.json"))
+    }
 }
 
 /// Grava de forma atômica: escreve num temporário ao lado e renomeia.

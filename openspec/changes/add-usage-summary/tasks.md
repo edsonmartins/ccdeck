@@ -5,8 +5,8 @@
 - [x] 0.2 Registrar exemplos anonimizados como fixtures de teste
 
 ## 1. Coleta
-- [ ] 1.1 `usage.rs`: leitura incremental por offset, dedupe por `message.id`, agregados por hora e modelo
-- [ ] 1.2 `state/usage/<sid>.json` com versão do formato
+- [x] 1.1 `usage.rs`: leitura incremental por offset, dedupe por `message.id`, agregados por hora e modelo
+- [x] 1.2 `state/usage/<sid>.json` com versão do formato
 - [ ] 1.3 Hook anexa cada evento em `state/events/<sid>.jsonl` (com rotação simples)
 - [ ] 1.4 Tempo por estado (aprovação, sua vez, trabalhando) a partir do histórico
 

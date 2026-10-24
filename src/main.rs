@@ -13,6 +13,7 @@ mod store;
 mod tmux;
 mod transcript;
 mod ui;
+mod usage;
 
 use std::process::Command;
 use std::time::Duration;
