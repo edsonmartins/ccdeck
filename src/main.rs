@@ -95,19 +95,24 @@ fn open_ui(paths: &Paths) -> Result<()> {
         }
     }
     let t = tmux::Tmux::new(paths.tmux_conf())?;
+    let exe = std::env::current_exe()?;
+    let cmd = format!("{} ui", hook::shell_quote(&exe.to_string_lossy()));
+    let mut env = vec![("CCDECK_UI_PANE".to_string(), "1".to_string())];
+    if let Some(home) = &paths.home {
+        env.push(("CCDECK_HOME".into(), home.to_string_lossy().to_string()));
+    }
+    if let Ok(sock) = std::env::var("CCDECK_TMUX_SOCKET") {
+        env.push(("CCDECK_TMUX_SOCKET".into(), sock));
+    }
+    let build = build_id(&exe);
     if !t.ui_exists() {
-        let exe = std::env::current_exe()?;
-        let cmd = format!("{} ui", hook::shell_quote(&exe.to_string_lossy()));
-        let mut env = vec![("CCDECK_UI_PANE".to_string(), "1".to_string())];
-        if let Some(home) = &paths.home {
-            env.push(("CCDECK_HOME".into(), home.to_string_lossy().to_string()));
-        }
-        if let Ok(sock) = std::env::var("CCDECK_TMUX_SOCKET") {
-            env.push(("CCDECK_TMUX_SOCKET".into(), sock));
-        }
         let (cols, rows) = ratatui::crossterm::terminal::size().unwrap_or((200, 50));
         t.ui_create(&cmd, &env, cols, rows)?;
+    } else if t.ui_option("@ccdeck_build").as_deref() != Some(build.as_str()) {
+        // Binário atualizado (cargo install): a barra antiga continuaria rodando.
+        t.respawn_sidebar(&cmd, &env)?;
     }
+    t.set_ui_option("@ccdeck_build", Some(&build));
     t.attach_ui()?;
     Ok(())
 }
@@ -191,6 +196,21 @@ fn run_tui(paths: Paths, sidebar: String) -> Result<()> {
         app.leave_ui();
     }
     result
+}
+
+/// Identifica o binário instalado (tamanho + data de modificação).
+fn build_id(exe: &std::path::Path) -> String {
+    std::fs::metadata(exe)
+        .map(|m| {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("{}-{mtime}", m.len())
+        })
+        .unwrap_or_default()
 }
 
 fn which(bin: &str) -> Option<String> {

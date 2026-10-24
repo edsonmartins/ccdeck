@@ -326,6 +326,24 @@ impl Tmux {
         };
     }
 
+    /// Recria só a barra (painel 0) com outro comando; a sessão da direita
+    /// fica como está. Usado quando o binário do ccdeck mudou.
+    pub fn respawn_sidebar(&self, sidebar_cmd: &str, env: &[(String, String)]) -> Result<()> {
+        let target = format!("={UI_SESSION}:deck.0");
+        let mut args: Vec<String> = ["respawn-pane", "-k", "-t", &target]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        for (k, v) in env {
+            args.push("-e".into());
+            args.push(format!("{k}={v}"));
+        }
+        args.push(sidebar_cmd.into());
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.run(&refs)?;
+        Ok(())
+    }
+
     pub fn kill_ui(&self) {
         let _ = self.run(&["kill-session", "-t", "=ccdeck-ui"]);
     }
