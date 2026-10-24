@@ -47,6 +47,62 @@ pub struct Runtime {
     pub record: Option<StatusRecord>,
 }
 
+/// O que o modal de entrega mostra (ADR-0017).
+#[derive(Debug, Clone)]
+pub struct DeliverInfo {
+    pub branch: String,
+    pub base: String,
+    pub dirty: Vec<String>,
+    pub ahead: Option<usize>,
+    /// `None` = branch ainda sem upstream.
+    pub unpushed: Option<usize>,
+    pub remote: Option<String>,
+    pub pr: Option<crate::delivery::Pr>,
+    pub gh_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliverItem {
+    Commit,
+    Push,
+    Pr,
+}
+
+impl DeliverInfo {
+    /// Itens do menu e se estão disponíveis (com o motivo quando não).
+    pub fn items(&self) -> Vec<(DeliverItem, Result<(), &'static str>)> {
+        let commit = if self.dirty.is_empty() {
+            Err("nada para commitar")
+        } else {
+            Ok(())
+        };
+        let push = match (&self.remote, self.unpushed) {
+            (None, _) => Err("sem remoto origin"),
+            (_, Some(0)) => Err("nada para enviar"),
+            _ => Ok(()),
+        };
+        let pr = match (&self.remote, &self.pr) {
+            (None, _) => Err("sem remoto origin"),
+            (_, Some(_)) => Err("já existe PR aberto"),
+            _ if self.unpushed.is_none() => Err("faça o push antes"),
+            _ => Ok(()),
+        };
+        vec![
+            (DeliverItem::Commit, commit),
+            (DeliverItem::Push, push),
+            (DeliverItem::Pr, pr),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliverStage {
+    Menu(usize),
+    /// Editando a mensagem do commit ou o título do PR.
+    Edit(DeliverItem),
+    Confirm(crate::delivery::Action),
+}
+
 /// Estado de uma tarefa numa janela tmux da sessão (setup, verify).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskState {
@@ -171,6 +227,14 @@ pub enum Modal {
     },
     Filter,
     Help,
+    /// Entrega da sessão (ADR-0017). `output` = (ok, saída da última ação).
+    Deliver {
+        session: String,
+        info: Box<DeliverInfo>,
+        stage: DeliverStage,
+        input: TextInput,
+        output: Option<(bool, String)>,
+    },
     /// Broadcast (ADR-0016). `focus` 0 = texto, `i` = `targets[i - 1]`.
     Broadcast {
         text: TextInput,
@@ -226,6 +290,10 @@ pub struct App {
     pub summary: Option<Summary>,
     pub summary_today: Option<Summary>,
     summary_at: Option<Instant>,
+    /// PRs abertos e CI por projeto (ADR-0017).
+    pub ci: crate::delivery::CiScanner,
+    /// Ação de entrega em andamento.
+    pub runner: crate::delivery::Runner,
     /// Último estado visto da verificação de cada sessão (para avisar ao terminar).
     verify_seen: HashMap<String, TaskState>,
     /// Sessão → arquivo → outras sessões que alteraram o mesmo arquivo.
@@ -268,6 +336,8 @@ impl App {
             summary_today: None,
             summary_at: None,
             verify_seen: HashMap::new(),
+            ci: Default::default(),
+            runner: Default::default(),
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
             msg_cache: HashMap::new(),
@@ -398,6 +468,8 @@ impl App {
         self.update_usage();
         self.update_summary();
         self.check_verify();
+        self.update_ci();
+        self.collect_delivery();
         self.mark_seen_pending();
         self.update_last_message();
         if let Some(f) = &self.flash
@@ -946,6 +1018,240 @@ impl App {
         self.log_action(&s, "responder", text);
         self.info(format!("resposta enviada a {}", s.name));
         Ok(())
+    }
+
+    /// Consulta os PRs abertos dos projetos com sessões em branch (ADR-0017).
+    fn update_ci(&mut self) {
+        // PR novo ou CI mudou: atualiza o modal de entrega aberto.
+        if self.ci.collect()
+            && let Modal::Deliver { session, .. } = &self.modal
+            && let Some(s) = self.state.sessions.iter().find(|s| &s.id == session)
+        {
+            let pr = self.pr_of(s).cloned();
+            let err = self.ci.errors.get(&s.project_id).cloned();
+            if let Modal::Deliver { info, .. } = &mut self.modal {
+                info.pr = pr;
+                info.gh_error = err;
+            }
+        }
+        if self.ci.busy()
+            || self
+                .ci
+                .last
+                .is_some_and(|t| t.elapsed() < crate::delivery::CI_EVERY)
+        {
+            return;
+        }
+        let projects: Vec<(String, PathBuf)> = self
+            .state
+            .projects
+            .iter()
+            .filter(|p| {
+                self.state
+                    .sessions
+                    .iter()
+                    .any(|s| s.project_id == p.id && s.worktree && s.branch.is_some())
+            })
+            .map(|p| (p.id.clone(), p.path.clone()))
+            .collect();
+        self.ci.spawn(&self.config.gh_command, projects);
+        self.ci.last = Some(Instant::now());
+    }
+
+    pub fn pr_of(&self, s: &Session) -> Option<&crate::delivery::Pr> {
+        self.ci.pr_for(&s.project_id, s.branch.as_deref()?)
+    }
+
+    fn deliver_info(&self, s: &Session) -> DeliverInfo {
+        let base = s.base.clone().unwrap_or_else(|| "main".into());
+        DeliverInfo {
+            branch: s.branch.clone().unwrap_or_default(),
+            dirty: git::status_lines(&s.cwd),
+            ahead: git::ahead_of(&s.cwd, &base),
+            unpushed: git::unpushed(&s.cwd),
+            remote: git::remote_url(&s.cwd),
+            pr: self.pr_of(s).cloned(),
+            gh_error: self.ci.errors.get(&s.project_id).cloned(),
+            base,
+        }
+    }
+
+    /// `E`: entrega da sessão (ADR-0017).
+    pub fn open_deliver(&mut self) {
+        let Some(s) = self.selected_session().cloned() else {
+            return;
+        };
+        if !s.worktree || s.branch.is_none() || !s.cwd.is_dir() {
+            self.error("entrega só para sessões com worktree e branch próprios");
+            return;
+        }
+        let info = self.deliver_info(&s);
+        let first = info
+            .items()
+            .iter()
+            .position(|(_, ok)| ok.is_ok())
+            .unwrap_or(0);
+        self.modal = Modal::Deliver {
+            session: s.id,
+            info: Box::new(info),
+            stage: DeliverStage::Menu(first),
+            input: TextInput::new(""),
+            output: None,
+        };
+    }
+
+    /// Teclas do modal de entrega. Devolve o próximo estado do modal.
+    fn deliver_key(
+        &mut self,
+        key: KeyEvent,
+        session: String,
+        info: Box<DeliverInfo>,
+        stage: DeliverStage,
+        mut input: TextInput,
+        output: Option<(bool, String)>,
+    ) -> Modal {
+        use crate::delivery::Action;
+        let s = self
+            .state
+            .sessions
+            .iter()
+            .find(|x| x.id == session)
+            .cloned();
+        let Some(s) = s else {
+            return Modal::None;
+        };
+        let busy = self.runner.running.is_some();
+        let stage = match (stage, key.code) {
+            (DeliverStage::Menu(_), KeyCode::Esc | KeyCode::Char('q')) => return Modal::None,
+            (DeliverStage::Menu(i), KeyCode::Down | KeyCode::Char('j')) => {
+                DeliverStage::Menu((i + 1).min(2))
+            }
+            (DeliverStage::Menu(i), KeyCode::Up | KeyCode::Char('k')) => {
+                DeliverStage::Menu(i.saturating_sub(1))
+            }
+            (DeliverStage::Menu(i), KeyCode::Enter) => {
+                let items = info.items();
+                match items.get(i) {
+                    _ if busy => {
+                        self.error("há uma ação de entrega em andamento");
+                        DeliverStage::Menu(i)
+                    }
+                    Some((_, Err(why))) => {
+                        self.error(why.to_string());
+                        DeliverStage::Menu(i)
+                    }
+                    Some((DeliverItem::Commit, Ok(()))) => {
+                        input = TextInput::new(s.name.clone());
+                        DeliverStage::Edit(DeliverItem::Commit)
+                    }
+                    Some((DeliverItem::Push, Ok(()))) => DeliverStage::Confirm(Action::Push),
+                    Some((DeliverItem::Pr, Ok(()))) => {
+                        input = TextInput::new(s.name.clone());
+                        DeliverStage::Edit(DeliverItem::Pr)
+                    }
+                    None => DeliverStage::Menu(i),
+                }
+            }
+            (DeliverStage::Edit(item), KeyCode::Esc) => DeliverStage::Menu(item as usize),
+            (DeliverStage::Edit(item), KeyCode::Enter) => {
+                let text = input.value.trim().to_string();
+                if text.is_empty() {
+                    self.error("o texto não pode ficar vazio");
+                    DeliverStage::Edit(item)
+                } else if item == DeliverItem::Commit {
+                    DeliverStage::Confirm(Action::Commit { message: text })
+                } else {
+                    let body = if s.notes.trim().is_empty() {
+                        format!("Sessão `{}` do ccdeck.", s.name)
+                    } else {
+                        s.notes.clone()
+                    };
+                    DeliverStage::Confirm(Action::Pr { title: text, body })
+                }
+            }
+            (DeliverStage::Edit(item), _) => {
+                input.handle(key);
+                DeliverStage::Edit(item)
+            }
+            (DeliverStage::Confirm(a), KeyCode::Esc) => DeliverStage::Menu(match a {
+                Action::Commit { .. } => 0,
+                Action::Push => 1,
+                Action::Pr { .. } => 2,
+            }),
+            (DeliverStage::Confirm(a), KeyCode::Enter) => {
+                let idx = match a {
+                    Action::Commit { .. } => 0,
+                    Action::Push => 1,
+                    Action::Pr { .. } => 2,
+                };
+                self.runner.start(
+                    &self.config.gh_command,
+                    s.id.clone(),
+                    s.cwd.clone(),
+                    info.branch.clone(),
+                    info.base.clone(),
+                    a,
+                );
+                return Modal::Deliver {
+                    session,
+                    info,
+                    stage: DeliverStage::Menu(idx),
+                    input,
+                    output: Some((true, "rodando…".into())),
+                };
+            }
+            (st, _) => st,
+        };
+        Modal::Deliver {
+            session,
+            info,
+            stage,
+            input,
+            output,
+        }
+    }
+
+    /// Resultado da ação de entrega: atualiza o modal ou avisa (ADR-0017).
+    fn collect_delivery(&mut self) {
+        let Some((sid, action, result)) = self.runner.collect() else {
+            return;
+        };
+        let Some(s) = self.state.sessions.iter().find(|s| s.id == sid).cloned() else {
+            return;
+        };
+        let (ok, text) = match &result {
+            Ok(out) => (true, out.clone()),
+            Err(e) => (false, e.clone()),
+        };
+        self.log_action(
+            &s,
+            "entrega",
+            &format!("{}: {}", action.label(), if ok { "ok" } else { "falhou" }),
+        );
+        if matches!(action, crate::delivery::Action::Pr { .. }) && ok {
+            self.ci.last = None; // busca o PR novo já
+        }
+        self.scanner.last_all = None;
+        let fresh = self.deliver_info(&s);
+        match &mut self.modal {
+            Modal::Deliver {
+                session,
+                info,
+                output,
+                ..
+            } if *session == sid => {
+                **info = fresh;
+                *output = Some((ok, text));
+            }
+            _ => {
+                let msg = format!("entrega de {} · {}: {}", s.name, action.label(), text);
+                if ok {
+                    self.info(msg);
+                } else {
+                    self.error(msg);
+                }
+            }
+        }
     }
 
     /// `B`: mesmo texto para várias sessões em *Aguardando você* (ADR-0016).
@@ -1584,6 +1890,13 @@ impl App {
                 self.handle_normal(key);
                 return;
             }
+            Modal::Deliver {
+                session,
+                info,
+                stage,
+                input,
+                output,
+            } => self.deliver_key(key, session, info, stage, input, output),
             Modal::Broadcast {
                 mut text,
                 mut targets,
@@ -1985,6 +2298,7 @@ impl App {
             KeyCode::Char('t') => self.run_verify(),
             KeyCode::Char('w') => self.open_windows(),
             KeyCode::Char('B') => self.open_broadcast(),
+            KeyCode::Char('E') => self.open_deliver(),
             KeyCode::Char('T') => self.open_verify_log(),
             KeyCode::Char('/') => self.modal = Modal::Filter,
             KeyCode::Char('?') => self.modal = Modal::Help,
@@ -2058,6 +2372,35 @@ mod tests {
 #[cfg(test)]
 mod task_tests {
     use super::*;
+
+    #[test]
+    fn itens_da_entrega() {
+        let mut i = DeliverInfo {
+            branch: "ccdeck/x".into(),
+            base: "main".into(),
+            dirty: vec!["M a.txt".into()],
+            ahead: Some(1),
+            unpushed: None,
+            remote: Some("git@github.com:o/r.git".into()),
+            pr: None,
+            gh_error: None,
+        };
+        let ok = |i: &DeliverInfo| i.items().iter().map(|(_, r)| r.is_ok()).collect::<Vec<_>>();
+        assert_eq!(ok(&i), [true, true, false], "PR só depois do push");
+        i.dirty.clear();
+        i.unpushed = Some(0);
+        assert_eq!(ok(&i), [false, false, true]);
+        i.pr = Some(crate::delivery::Pr {
+            number: 1,
+            url: String::new(),
+            head: "ccdeck/x".into(),
+            title: String::new(),
+            ci: crate::delivery::Ci::Ok,
+        });
+        assert_eq!(ok(&i), [false, false, false]);
+        i.remote = None;
+        assert_eq!(i.items()[1].1, Err("sem remoto origin"));
+    }
 
     #[test]
     fn estados_e_duracao_da_tarefa() {

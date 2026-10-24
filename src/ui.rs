@@ -395,7 +395,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     };
     let col_lines = [
         [
-            kv("Branch", s.branch.clone().unwrap_or_else(|| "—".into())),
+            kv("Branch", branch_with_pr(app, s)),
             kv(&ports_label, ports),
             kv("Sessão Claude", format!("{}…", &sid[..8])),
         ],
@@ -739,6 +739,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if sel_status.is_some() {
         keys.push(("t", "verificar"));
         keys.push(("w", "janelas"));
+        keys.push(("E", "entregar"));
         keys.push(("D", "diff"));
         keys.push(("L", "linha do tempo"));
     }
@@ -801,6 +802,181 @@ fn draw_modal(f: &mut Frame, app: &App) {
     let area = f.area();
     match &app.modal {
         Modal::None | Modal::Filter => {}
+        Modal::Deliver {
+            session,
+            info,
+            stage,
+            input,
+            output,
+        } => {
+            use crate::app::{DeliverItem, DeliverStage};
+            use crate::delivery::Action;
+            let name = app
+                .state
+                .sessions
+                .iter()
+                .find(|s| &s.id == session)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            let r = centered(area, 104, area.height.saturating_sub(6).min(30));
+            f.render_widget(Clear, r);
+            let confirming = matches!(stage, DeliverStage::Confirm(_));
+            let color = if confirming {
+                status_color(Status::Approval)
+            } else {
+                accent()
+            };
+            let hint = match stage {
+                DeliverStage::Menu(_) => " j/k escolhe · Enter segue · Esc fecha ",
+                DeliverStage::Edit(_) => " Enter revisa · Esc volta ",
+                DeliverStage::Confirm(_) => " Enter executa · Esc volta ",
+            };
+            let block = modal_block(format!("Entrega · {name}"), color)
+                .title_bottom(Line::styled(hint, Style::new().fg(muted())).right_aligned());
+            let inner = block.inner(r);
+            f.render_widget(block, r);
+            let vw = (inner.width as usize).saturating_sub(15);
+            let kvl = |k: &str, v: String| {
+                Line::from(vec![
+                    Span::styled(format!("{k:<14}"), Style::new().fg(muted())),
+                    Span::styled(truncate_left(&v, vw), Style::new().fg(fg())),
+                ])
+            };
+            let mut lines = vec![
+                kvl("branch", format!("{} → {}", info.branch, info.base)),
+                kvl(
+                    "commits",
+                    match (info.ahead, info.unpushed) {
+                        (Some(a), Some(u)) => format!("{a} à frente da base · {u} sem push"),
+                        (Some(a), None) => format!("{a} à frente da base · branch sem upstream"),
+                        _ => "—".into(),
+                    },
+                ),
+                kvl("não commitado", format!("{} arquivo(s)", info.dirty.len())),
+                kvl(
+                    "origin",
+                    info.remote
+                        .clone()
+                        .unwrap_or_else(|| "— (sem remoto)".into()),
+                ),
+                kvl(
+                    "PR",
+                    match &info.pr {
+                        Some(pr) => format!("{} · {} · {}", pr_badge(pr), pr.title, pr.url),
+                        None => "nenhum aberto".into(),
+                    },
+                ),
+            ];
+            if let Some(e) = &info.gh_error {
+                lines.push(Line::styled(
+                    format!("gh: {}", truncate(e, 90)),
+                    Style::new().fg(status_color(Status::Error)),
+                ));
+            }
+            lines.push(Line::raw(""));
+            match stage {
+                DeliverStage::Menu(cur) => {
+                    let running = app.runner.running.is_some();
+                    for (i, (item, ok)) in info.items().iter().enumerate() {
+                        let label = match item {
+                            DeliverItem::Commit => "commit  — git add -A && git commit",
+                            DeliverItem::Push => "push    — git push -u origin <branch>",
+                            DeliverItem::Pr => "PR      — gh pr create",
+                        };
+                        let sel = i == *cur;
+                        let (style, why) = match ok {
+                            Ok(()) if !running => (Style::new().fg(fg()), String::new()),
+                            Ok(()) => (
+                                Style::new().fg(muted()),
+                                "  (aguarde a ação em andamento)".into(),
+                            ),
+                            Err(w) => (Style::new().fg(muted()), format!("  ({w})")),
+                        };
+                        let line = Line::from(vec![
+                            Span::styled(
+                                if sel { " › " } else { "   " },
+                                Style::new().fg(accent()),
+                            ),
+                            Span::styled(label, style),
+                            Span::styled(why, Style::new().fg(muted())),
+                        ]);
+                        lines.push(if sel { line.bg(sel_bg()) } else { line });
+                    }
+                }
+                DeliverStage::Edit(item) => {
+                    let label = if *item == DeliverItem::Commit {
+                        "Mensagem do commit"
+                    } else {
+                        "Título do PR"
+                    };
+                    lines.extend(field_line(label, input.with_cursor(true), true));
+                }
+                DeliverStage::Confirm(a) => {
+                    let remote = info.remote.clone().unwrap_or_default();
+                    // (rótulo, valor): só o valor é cortado pela esquerda.
+                    let (title, detail): (String, Vec<(&str, String)>) = match a {
+                        Action::Commit { message } => (
+                            format!(
+                                "Commitar {} arquivo(s) com \"{message}\"?",
+                                info.dirty.len()
+                            ),
+                            info.dirty
+                                .iter()
+                                .take(12)
+                                .map(|d| ("", d.clone()))
+                                .collect(),
+                        ),
+                        Action::Push => (
+                            format!("Enviar {} para origin?", info.branch),
+                            vec![("destino: ", remote)],
+                        ),
+                        Action::Pr { title, .. } => (
+                            format!("Abrir PR \"{title}\"?"),
+                            vec![
+                                ("", format!("{} → {}", info.branch, info.base)),
+                                ("repositório: ", remote),
+                                ("corpo: ", "notas da sessão".into()),
+                            ],
+                        ),
+                    };
+                    lines.push(Line::styled(title, Style::new().fg(color).bold()));
+                    for (label, value) in detail {
+                        let room = (inner.width as usize).saturating_sub(3 + label.chars().count());
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("  {label}"), Style::new().fg(muted())),
+                            Span::styled(truncate_left(&value, room), Style::new().fg(fg())),
+                        ]));
+                    }
+                    if let Action::Commit { .. } = a
+                        && info.dirty.len() > 12
+                    {
+                        lines.push(Line::styled(
+                            format!("  … e mais {}", info.dirty.len() - 12),
+                            Style::new().fg(muted()),
+                        ));
+                    }
+                }
+            }
+            if let Some((ok, out)) = output {
+                lines.push(Line::raw(""));
+                let c = if *ok {
+                    added_color()
+                } else {
+                    status_color(Status::Error)
+                };
+                for l in out
+                    .lines()
+                    .rev()
+                    .take(6)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                {
+                    lines.push(Line::styled(format!("  {l}"), Style::new().fg(c)));
+                }
+            }
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        }
         Modal::Broadcast {
             text,
             targets,
@@ -1013,7 +1189,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
             f.render_widget(Paragraph::new(lines), inner);
         }
         Modal::Help => {
-            let r = centered(area, 66, 26);
+            let r = centered(area, 66, 27);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -1027,6 +1203,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("t / T", "verificar (verify do .ccdeck.json) / ver o log"),
                 ("w", "janelas da sessão (shell, servidor, logs)"),
                 ("B", "broadcast: mesmo texto para várias sessões"),
+                ("E", "entrega: commit, push e PR (gh), com confirmação"),
                 ("n / N", "nova sessão / novo projeto"),
                 ("a", "alternar visão Atenção"),
                 ("Tab", "Projetos → Atenção → Resumo"),
@@ -1398,6 +1575,25 @@ fn compact_usage(app: &App, sid: &str) -> Option<String> {
     }
     parts.push(format!("espera {}", fmt_dur(row.waiting)));
     Some(parts.join(" · "))
+}
+
+/// `PR #12 ✓`, `PR #12 ✕ 2`, `PR #12 … 1` (ADR-0017).
+fn pr_badge(pr: &crate::delivery::Pr) -> String {
+    use crate::delivery::Ci;
+    match pr.ci {
+        Ci::NoChecks => format!("PR #{}", pr.number),
+        Ci::Ok => format!("PR #{} ✓", pr.number),
+        Ci::Pending(n) => format!("PR #{} … {n}", pr.number),
+        Ci::Failing(n) => format!("PR #{} ✕ {n}", pr.number),
+    }
+}
+
+fn branch_with_pr(app: &App, s: &crate::model::Session) -> String {
+    let b = s.branch.clone().unwrap_or_else(|| "—".into());
+    match app.pr_of(s) {
+        Some(pr) => format!("{b} · {}", pr_badge(pr)),
+        None => b,
+    }
 }
 
 /// Estado da verificação no painel (ADR-0013).

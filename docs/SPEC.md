@@ -75,6 +75,7 @@ Ver o protótipo navegável das telas (canvas de Design). Resumo:
 | `t` / `T` | verificação da sessão / log |
 | `w` | janelas auxiliares da sessão |
 | `B` | broadcast de prompt |
+| `E` | entrega (commit, push, PR) |
 | `e` | editar notas |
 | `r` | renomear |
 | `d` | remover |

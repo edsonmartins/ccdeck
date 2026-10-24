@@ -25,10 +25,11 @@ Leia antes de qualquer mudança: `CONSTITUTION.md` (invariantes), `docs/SPEC.md`
 - `openspec.rs` — changes do OpenSpec do repositório (título, progresso, prompt).
 - `windows.rs` — janelas auxiliares da sessão (lista do modal `w`).
 - `broadcast.rs` — elegíveis e marcação do broadcast `B`.
+- `delivery.rs` — entrega (commit/push/PR) e CI via `gh` em segundo plano.
 - `store.rs` (migrações de schema), `paths.rs`, `model.rs`, `input.rs`, `notify.rs`.
 
 ## Changes
 Mudanças novas entram como change package em `openspec/changes/<id>/` (proposal, tasks, specs) e ADR em `docs/adr/`.
 
 ## Verificação
-`cargo fmt && cargo clippy --all-targets && cargo test`. Para testar o fluxo sem gastar tokens, aponte `claude_command` para `scripts/fake-claude.sh` no `config.json` (com `CCDECK_HOME` num diretório temporário).
+`cargo fmt && cargo clippy --all-targets && cargo test`. Para testar o fluxo sem gastar tokens, aponte `claude_command` para `scripts/fake-claude.sh` (e `gh_command` para `scripts/fake-gh.sh`, com `FAKE_GH_DIR`) no `config.json` (com `CCDECK_HOME` num diretório temporário).

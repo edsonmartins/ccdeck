@@ -3,6 +3,7 @@
 mod app;
 mod broadcast;
 mod changes;
+mod delivery;
 mod events;
 mod git;
 mod hook;

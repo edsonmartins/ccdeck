@@ -36,6 +36,7 @@ ccdeck            # abre a TUI
 - **Estado via hooks oficiais**: o ccdeck passa um settings com hooks (`claude --settings`) que chamam `ccdeck hook`. Nada é escrito no seu `~/.claude/settings.json`.
 - **Retomada**: cada sessão nasce com `--session-id`; se o processo morrer, `Enter` retoma com `claude --resume <id>` no mesmo diretório.
 - **Responder sem entrar**: o painel mostra o pedido de permissão pendente e a última resposta do Claude; `y`/`x` respondem o pedido e `m` envia uma resposta. O `y` só funciona se o pedido estiver na tela há pelo menos 600 ms e ainda for o mesmo.
+- **Entrega e CI**: `E` faz commit, push (`git push -u origin <branch>`) e abre o PR (`gh pr create`) da sessão. Cada ação mostra o que vai acontecer e só roda depois de um segundo Enter. O painel mostra o PR aberto do branch e o CI (`PR #12 ✓` / `✕ n` / `… n`), consultado a cada 60 s por projeto com o `gh` que você já tem autenticado; o ccdeck não guarda token.
 - **Broadcast**: `B` envia o mesmo texto a várias sessões vivas em *Aguardando você* (as do projeto atual vêm marcadas). Há confirmação com a lista, e cada destino é conferido de novo no envio.
 - **Alterações e colisões**: cada sessão mostra os arquivos que mudou desde a base; se duas sessões do mesmo projeto mexem no mesmo arquivo, aparece `⚠`.
 - **Resumo de uso** (`Tab` até a aba Resumo): tokens, custo equivalente em API, taxa de cache, tempo que as sessões ficaram esperando você, atividade recente e arquivos modificados, por período (`p`: hoje / 7 / 30 dias). Lido dos transcripts locais do Claude Code (inclui subagentes); nada sai da máquina. Para quem usa assinatura, `"cost_display": "hidden"` esconde o custo; a tabela `prices` do `config.json` pode ser editada.
@@ -54,6 +55,7 @@ ccdeck            # abre a TUI
 | `t` / `T` | roda o `verify` do `.ccdeck.json` no worktree / abre o log |
 | `w` | janelas da sessão: shell no worktree, `windows` do `.ccdeck.json` (Enter entra, K fecha) |
 | `B` | broadcast: mesmo texto para várias sessões em Aguardando você (com confirmação) |
+| `E` | entrega: commit, push e PR (`gh`), cada um com confirmação |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
 | `Enter` | entrar na sessão (retoma se suspensa) |
 | `Ctrl-q` | dentro da sessão: voltar ao ccdeck |

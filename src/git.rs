@@ -71,6 +71,42 @@ pub fn is_dirty(dir: &Path) -> Result<bool> {
     Ok(!git(dir, &["status", "--porcelain"])?.is_empty())
 }
 
+/// Linhas do `git status --porcelain` (para a confirmação do commit, ADR-0017).
+pub fn status_lines(dir: &Path) -> Vec<String> {
+    git(dir, &["status", "--porcelain"])
+        .map(|s| {
+            s.lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Commits do branch que não estão na base.
+pub fn ahead_of(dir: &Path, base: &str) -> Option<usize> {
+    git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Commits ainda não enviados ao upstream; `None` = branch sem upstream.
+pub fn unpushed(dir: &Path) -> Option<usize> {
+    git(dir, &["rev-list", "--count", "@{u}..HEAD"])
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+pub fn remote_url(dir: &Path) -> Option<String> {
+    git(dir, &["remote", "get-url", "origin"])
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
 pub fn dirty_count(dir: &Path) -> usize {
     git(dir, &["status", "--porcelain"])
         .map(|s| s.lines().filter(|l| !l.is_empty()).count())
