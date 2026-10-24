@@ -7,7 +7,6 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::text::Text;
 use uuid::Uuid;
 
 use crate::changes::{self, Job, Scanner};
@@ -238,6 +237,8 @@ pub enum Modal {
     },
     Filter,
     Help,
+    /// Detalhes da sessão selecionada (`i`), em zoom.
+    Details,
     /// Entrega da sessão (ADR-0017). `output` = (ok, saída da última ação).
     Deliver {
         session: String,
@@ -286,7 +287,6 @@ pub struct App {
     pub cursor: usize,
     pub filter: TextInput,
     pub flash: Option<Flash>,
-    pub preview: Text<'static>,
     pub quit: bool,
     pub pending_attach: Option<String>,
     /// Janela em que o attach entra (ADR-0015); `None` = a do Claude Code.
@@ -340,7 +340,6 @@ impl App {
             cursor: 0,
             filter: TextInput::default(),
             flash: None,
-            preview: Text::default(),
             quit: false,
             pending_attach: None,
             pending_window: None,
@@ -481,11 +480,7 @@ impl App {
 
     pub fn tick(&mut self) {
         self.refresh();
-        if self.ui.is_some() {
-            self.ui_sync();
-        } else {
-            self.update_preview();
-        }
+        self.ui_sync();
         self.update_changes();
         self.update_usage();
         self.update_summary();
@@ -1590,24 +1585,6 @@ impl App {
         }
     }
 
-    fn update_preview(&mut self) {
-        use ansi_to_tui::IntoText;
-        let Some(s) = self.selected_session() else {
-            self.preview = Text::default();
-            return;
-        };
-        let name = s.tmux_name();
-        if !self.alive.contains(&name) {
-            self.preview = Text::default();
-            return;
-        }
-        self.preview = self
-            .tmux
-            .capture(&name)
-            .and_then(|b| b.into_text().ok())
-            .unwrap_or_default();
-    }
-
     fn save(&mut self) {
         if let Err(e) = store::save_state(&self.paths, &self.state) {
             self.error(format!("não foi possível salvar o estado: {e:#}"));
@@ -1854,11 +1831,7 @@ impl App {
             self.cursor = pos;
         }
         let name = self.state.sessions[idx].tmux_name();
-        if self.ui.is_some() {
-            self.focus_session(&name);
-        } else {
-            self.pending_attach = Some(name);
-        }
+        self.focus_session(&name);
         Ok(())
     }
 
@@ -1963,11 +1936,7 @@ impl App {
                     self.error(format!("não foi possível retomar: {e:#}"));
                     return;
                 }
-                if self.ui.is_some() {
-                    self.focus_session(&name);
-                } else {
-                    self.pending_attach = Some(name);
-                }
+                self.focus_session(&name);
             }
             None => self.info("nada selecionado — N cadastra um projeto"),
         }
@@ -2296,6 +2265,18 @@ impl App {
                     }
                 }
             },
+            Modal::Details => match key.code {
+                KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => Modal::None,
+                _ => {
+                    // As ações da sessão continuam valendo com os detalhes abertos.
+                    self.handle_normal(key);
+                    if matches!(self.modal, Modal::None) {
+                        Modal::Details
+                    } else {
+                        return;
+                    }
+                }
+            },
             Modal::Help => match key.code {
                 KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Enter => {
                     Modal::None
@@ -2476,6 +2457,7 @@ impl App {
             KeyCode::Char('m') => self.open_reply(),
             KeyCode::Char('D') => self.open_diff(),
             KeyCode::Char('L') => self.open_timeline(),
+            KeyCode::Char('i') if self.selected_session().is_some() => self.modal = Modal::Details,
             KeyCode::Char('t') => self.run_verify(),
             KeyCode::Char('w') => self.open_windows(),
             KeyCode::Char('B') => self.open_broadcast(),

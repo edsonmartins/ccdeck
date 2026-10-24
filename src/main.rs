@@ -51,7 +51,7 @@ enum Cmd {
     Doctor,
     /// Cria um `.ccdeck.json` de exemplo no diretório (padrão: o atual).
     InitProject { dir: Option<std::path::PathBuf> },
-    /// Modo integrado (protótipo, ADR-0018): árvore à esquerda, sessão à direita.
+    /// Abre o ccdeck (o mesmo que sem subcomando; ADR-0018).
     Ui,
 }
 
@@ -76,12 +76,14 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
-        Some(Cmd::Ui) => match std::env::var("CCDECK_UI_PANE") {
+        Some(Cmd::Ui) | None => match std::env::var("CCDECK_UI_PANE") {
             // Já dentro de `ccdeck-ui`: esta é a barra lateral.
-            Ok(_) => run_tui(paths, std::env::var("TMUX_PANE").ok()),
+            Ok(_) => match std::env::var("TMUX_PANE") {
+                Ok(pane) => run_tui(paths, pane),
+                Err(_) => bail!("CCDECK_UI_PANE sem TMUX_PANE: rode só `ccdeck`"),
+            },
             Err(_) => open_ui(&paths),
         },
-        None => run_tui(paths, None),
     }
 }
 
@@ -110,8 +112,8 @@ fn open_ui(paths: &Paths) -> Result<()> {
     Ok(())
 }
 
-/// `sidebar` = painel tmux da barra no modo integrado (ADR-0018).
-fn run_tui(paths: Paths, sidebar: Option<String>) -> Result<()> {
+/// A TUI é a barra lateral de `ccdeck-ui`; `sidebar` é o painel dela (ADR-0018).
+fn run_tui(paths: Paths, sidebar: String) -> Result<()> {
     for bin in ["tmux", "git"] {
         if which(bin).is_none() {
             bail!("{bin} não encontrado no PATH — rode `ccdeck doctor`");
@@ -119,19 +121,14 @@ fn run_tui(paths: Paths, sidebar: Option<String>) -> Result<()> {
     }
     let exe = std::env::current_exe()?;
     let mut app = App::new(paths, &exe)?;
-    let ui = sidebar.is_some();
-    if let Some(pane) = sidebar {
-        app.enable_ui(pane);
-    }
+    app.enable_ui(sidebar);
     let mouse = |on: bool| {
-        if ui {
-            use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-            let _ = if on {
-                ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture)
-            } else {
-                ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture)
-            };
-        }
+        use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        let _ = if on {
+            ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture)
+        } else {
+            ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture)
+        };
     };
     let mut terminal = ratatui::init();
     mouse(true);
@@ -186,7 +183,7 @@ fn run_tui(paths: Paths, sidebar: Option<String>) -> Result<()> {
     })();
     mouse(false);
     ratatui::restore();
-    if ui && app.quit {
+    if app.quit {
         app.leave_ui();
     }
     result

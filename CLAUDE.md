@@ -9,11 +9,11 @@ Leia antes de qualquer mudança: `CONSTITUTION.md` (invariantes), `docs/SPEC.md`
 - Toda mudança de formato do `state.json` sobe `SCHEMA_VERSION` e ganha migração em `store::migrate`.
 
 ## Mapa do código
-- `main.rs` — CLI (`ccdeck`, `ccdeck hook`, `ccdeck doctor`) e loop da TUI (attach suspende a TUI).
+- `main.rs` — CLI (`ccdeck`, `ccdeck hook`, `ccdeck doctor`), criação da sessão `ccdeck-ui` e loop da barra lateral (mouse).
 - `app.rs` — estado, reconciliação tmux + hooks, ações e teclado.
 - `ui.rs` — desenho com ratatui.
 - `hook.rs` — mapeamento evento → estado e geração do `hooks.json`.
-- `tmux.rs` — servidor dedicado `-L ccdeck`.
+- `tmux.rs` — servidor dedicado `-L ccdeck` (`CCDECK_TMUX_SOCKET` troca em testes); painéis marcados e troca por `swap-pane` (ADR-0018).
 - `git.rs` — worktrees via CLI.
 - `changes.rs` — varredura de alterações em thread e colisões.
 - `project.rs` — `.ccdeck.json`: cópia, setup, portas.

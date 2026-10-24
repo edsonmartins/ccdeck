@@ -3,17 +3,23 @@
 Gerenciador de sessões do Claude Code no terminal. Organiza várias sessões em paralelo por projeto, isola cada uma num git worktree, mostra em tempo real quem está trabalhando, quem espera aprovação e quem terminou, e deixa você fechar o app e retomar tudo depois.
 
 ```
- ccdeck  5 sessões em 2 projetos  2 precisam de você
- Projetos   Atenção (2)        │  migracao-flyway  vendax-crm        ▲ Aguardando aprovação
- / filtrar…                    │  ╭──────────────────────────────────────────────────────────╮
- ▾ vendax-crm  3               │  │ Branch                  Diretório               No estado há │
-   ● filtro-clientes     trab. │  │ ccdeck/migracao-flyway  …/vendax-crm.worktrees  7 min       │
-   ▲ migracao-flyway    aprov. │  ╰──────────────────────────────────────────────────────────╯
-   ◆ fix-login-sso     sua vez │  ╭ Preview ao vivo ─────────────────────────────────────────╮
- ▾ gestor-rq  2                │  │ Permitir executar este comando?                          │
-   ● relatorio-cobranca  trab. │  │ ❯ 1. Sim                                                 │
-   ‖ refactor-pedidos    susp. │  ╰──────────────────────────────────────────────────────────╯
+ ccdeck  5 sessões em 2 projetos  2 pr…│ ▐▛███▜▌  Claude Code
+ Projetos   Atenção (2)   Resumo       │ ❯ aplique a migração V42 e rode os testes
+ / filtrar…                            │ ⏺ Bash(./mvnw flyway:migrate)
+ ▾ vendax-crm  3                       │ ──────────────────────────────────────────
+   ● filtro-clientes            trab.  │  Bash command
+   ▲ migracao-flyway           aprov.  │   ./mvnw flyway:migrate
+   ◆ fix-login-sso            sua vez  │  Do you want to proceed?
+ ▾ gestor-rq  2                        │  ❯ 1. Yes
+   ● relatorio-cobranca         trab.  │    2. Yes, and always allow …
+ ╭ ▲ Aguardando aprovação ───────────╮ │    3. No
+ │ccdeck/migracao-flyway · PR #12 …1 │ │
+ │▲ Bash: ./mvnw flyway:migrate      │ │
+ │y aprovar  x recusar               │ │
+ │contexto 12% (118,4k / 1M)         │ │
+ ╰───────────────────────────────────╯ │
 ```
+À esquerda, a árvore (clique com o mouse ou `j`/`k`); à direita, a sessão selecionada rodando de verdade.
 
 ## Requisitos
 
@@ -26,12 +32,13 @@ Gerenciador de sessões do Claude Code no terminal. Organiza várias sessões em
 ```bash
 cargo install --path .
 ccdeck doctor     # confere dependências e mostra onde ficam os arquivos
-ccdeck            # abre a TUI
+ccdeck            # abre a árvore + a sessão ao lado (Ctrl-q volta à árvore e, nela, desconecta)
 ```
 
 ## Como funciona
 
-- **Sessões vivem num tmux dedicado** (`tmux -L ccdeck`), separado do seu tmux. Fechar o ccdeck não mata nada; `Enter` entra na sessão e `Ctrl-q` volta.
+- **Árvore à esquerda, sessão à direita**: `ccdeck` abre o modo integrado. Clique numa sessão (ou `j`/`k`) e ela aparece viva ao lado; `Enter` põe o foco nela e `Ctrl-q` volta à árvore (na árvore, desconecta sem parar nada). Modais, o Resumo e os detalhes da sessão (`i`) abrem com zoom.
+- **Sessões vivem num tmux dedicado** (`tmux -L ccdeck`), separado do seu tmux. Fechar o ccdeck não mata nada; não feche `ccdeck-ui` com `tmux kill-session` enquanto uma sessão aparece à direita (use `q`).
 - **Worktree por sessão**: ao criar uma sessão num repositório, o ccdeck cria `<repo>.worktrees/<slug>` num branch `ccdeck/<slug>`.
 - **Estado via hooks oficiais**: o ccdeck passa um settings com hooks (`claude --settings`) que chamam `ccdeck hook`. Nada é escrito no seu `~/.claude/settings.json`.
 - **Retomada**: cada sessão nasce com `--session-id`; se o processo morrer, `Enter` retoma com `claude --resume <id>` no mesmo diretório.
@@ -51,14 +58,16 @@ ccdeck            # abre a TUI
 | `y` / `x` | aprovar / recusar o pedido pendente sem entrar |
 | `m` | responder à sessão sem entrar |
 | `D` | diff completo da sessão (`diff_command`) |
+| `i` | detalhes da sessão: última resposta, alterações e colisões, portas, notas |
 | `L` | linha do tempo da sessão (eventos, ações do ccdeck, compactações) |
 | `t` / `T` | roda o `verify` do `.ccdeck.json` no worktree / abre o log |
 | `w` | janelas da sessão: shell no worktree, `windows` do `.ccdeck.json` (Enter entra, K fecha) |
 | `B` | broadcast: mesmo texto para várias sessões em Aguardando você (com confirmação) |
 | `E` | entrega: commit, push e PR (`gh`), cada um com confirmação |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
-| `Enter` | entrar na sessão (retoma se suspensa) |
-| `Ctrl-q` | dentro da sessão: voltar ao ccdeck |
+| clique / roda | selecionar sessão ou projeto na árvore |
+| `Enter` | foco na sessão à direita (retoma se suspensa) |
+| `Ctrl-q` | na sessão: voltar à árvore; na árvore: desconectar |
 | `n` / `N` | nova sessão / novo projeto |
 | `a` | visão Atenção |
 | `Tab` | Projetos → Atenção → Resumo |

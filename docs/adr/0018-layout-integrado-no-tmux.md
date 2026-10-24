@@ -1,18 +1,20 @@
 # ADR-0018 — Layout integrado: árvore à esquerda, sessão à direita (no tmux)
 
-- Status: Proposto (protótipo em `ccdeck ui`)
+- Status: Aceito (2026-10-24, depois do protótipo `ccdeck ui`)
 - Data: 2026-10-24
-- Substituiria, se aceito: a parte "entrar = attach que suspende a TUI" do ADR-0002 e o item "Renderizar o terminal dentro do ccdeck" de "Fora de escopo" da CONSTITUTION (que passaria a dizer "emulador de terminal próprio").
+- Substitui: a parte "entrar = attach que suspende a TUI" do ADR-0002 e o item de "Fora de escopo" da CONSTITUTION, que passa a excluir só um emulador de terminal próprio.
 
 ## Contexto
 No uso real, entrar numa sessão troca a tela inteira: a árvore some e volta só com `Ctrl-q`. O usuário quer a árvore de projetos e sessões sempre visível à esquerda, a sessão selecionada viva à direita, e clicar com o mouse para trocar (referência: layout do better-agent-terminal, app Tauri com xterm.js).
 
-## Decisão (proposta)
-1. `ccdeck ui` cria (ou reaproveita) a sessão tmux `ccdeck-ui` no servidor do deck, com uma janela de dois painéis: à esquerda o ccdeck em modo barra lateral; à direita o painel da sessão selecionada.
+## Decisão
+0. `ccdeck` abre sempre neste modo (`ccdeck ui` é sinônimo). O modo anterior (TUI em tela cheia, attach que troca de tela, preview por `capture-pane`) foi removido a pedido do usuário.
+1. O modo integrado cria (ou reaproveita) a sessão tmux `ccdeck-ui` no servidor do deck, com uma janela de dois painéis: à esquerda o ccdeck em modo barra lateral; à direita o painel da sessão selecionada.
 2. A sessão é mostrada **movendo o painel real do Claude Code** para a direita com `tmux swap-pane`; quem ocupa o lugar dele na janela de origem é um painel de espera (`@ccdeck_placeholder`). Antes de mostrar outra, a anterior volta para casa. Só uma sessão fica "emprestada" por vez, e qual é fica gravado em `@ccdeck_shown` na sessão `ccdeck-ui` (sobrevive a um crash do ccdeck).
 3. O painel do Claude Code é marcado com `@ccdeck_session=<nome>`: `send-keys`, `capture-pane` e a detecção de sessão viva passam a achar o painel pela marca, onde quer que ele esteja.
 4. Mouse: a barra lateral pede eventos de mouse (crossterm); clique seleciona e mostra, roda do mouse navega. Clicar no painel da direita digita no Claude Code (mouse do tmux). `Ctrl-q` na direita volta para a barra; na barra, desconecta (tudo continua rodando).
 5. Modais e telas largas (nova sessão, Resumo, diff) dão zoom no painel da barra enquanto estão abertos.
+6. A barra mostra um cartão da sessão selecionada (estado, pedido pendente com `y`/`x`, PR/CI, contexto, uso de hoje, verificação, sem eventos, alterações e colisões). O painel completo do modo anterior, sem o preview, virou a tela **Detalhes** (`i`, em zoom): última resposta inteira, alterações e colisões (ADR-0009), portas, setup e notas.
 
 ## Validação do mecanismo (tmux 3.8)
 - [confirmado] `swap-pane -d` entre sessões diferentes leva o painel com o processo e as opções de painel (`@ccdeck_session`).
@@ -30,4 +32,4 @@ No uso real, entrar numa sessão troca a tela inteira: a árvore some e volta s�
 ## Consequências
 - Invariante 1 mantida: as sessões continuam no tmux; fechar o ccdeck devolve o painel emprestado para casa.
 - Invariante 2 mantida: o terminal é o próprio tmux; nada de parsing.
-- O preview por `capture-pane` deixa de ser necessário no modo integrado.
+- O preview por `capture-pane` e a dependência `ansi-to-tui` saem do projeto.

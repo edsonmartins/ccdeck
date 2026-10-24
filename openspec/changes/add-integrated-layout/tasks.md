@@ -11,5 +11,5 @@
 - [x] 1.5 Testes e fluxo real
 
 ## 2. Depois da aprovação
-- [ ] 2.1 ADR-0018 aceito, CONSTITUTION ajustada, `ccdeck` abre no modo integrado
+- [x] 2.1 ADR-0018 aceito, CONSTITUTION ajustada, `ccdeck` abre no modo integrado
 - [ ] 2.2 Miniaturas das outras janelas da sessão (shell, servidor) embaixo

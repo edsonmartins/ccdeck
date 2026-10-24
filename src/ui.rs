@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::{App, Item, Modal, Task, TaskState, View, ago};
@@ -68,21 +68,21 @@ pub fn draw(f: &mut Frame, app: &App) {
     ])
     .areas(f.area());
     draw_header(f, app, header);
-    // Modo integrado (ADR-0018): este painel é só a barra; a sessão está ao lado.
-    // Com zoom (modais, Resumo) desenha como sempre.
-    if app.ui.is_some() && body.width < 80 {
-        draw_ui_bar(f, app, body);
+    // Este painel é a barra; a sessão está ao lado, no tmux (ADR-0018).
+    // O Resumo abre com zoom e usa a janela inteira.
+    if matches!(app.modal, Modal::Details) && body.width >= 80 {
+        f.render_widget(Clear, body);
+        draw_detail(f, app, body);
         draw_footer(f, app, footer);
-        draw_modal(f, app);
         return;
     }
-    let [side, main] =
-        Layout::horizontal([Constraint::Length(42), Constraint::Fill(1)]).areas(body);
-    draw_sidebar(f, app, side);
-    if app.view == View::Summary {
+    if app.view == View::Summary && body.width >= 80 {
+        let [side, main] =
+            Layout::horizontal([Constraint::Length(42), Constraint::Fill(1)]).areas(body);
+        draw_sidebar(f, app, side);
         draw_summary(f, app, main);
     } else {
-        draw_detail(f, app, main);
+        draw_ui_bar(f, app, body);
     }
     draw_footer(f, app, footer);
     draw_modal(f, app);
@@ -153,6 +153,26 @@ fn draw_ui_bar(f: &mut Frame, app: &App, area: Rect) {
         truncate(&format!("verificação: {}", verify_text(app, s)), w),
         Style::new().fg(muted()),
     ));
+    if let Some(r) = app.runtime.get(&s.id) {
+        let last = r.record.as_ref().map(|x| x.at).unwrap_or(r.since);
+        if let Some(m) = crate::app::stale_minutes(r.status, last, chrono::Utc::now()) {
+            lines.push(Line::styled(
+                truncate(&format!("{} · sem eventos há {m} min", r.event), w),
+                Style::new().fg(status_color(Status::Approval)),
+            ));
+        }
+    }
+    let n = app.changes_of(s).map(Vec::len).unwrap_or(0);
+    let coll = app.collisions.get(&s.id).map(|c| c.len()).unwrap_or(0);
+    if n > 0 || coll > 0 {
+        let mut t = format!("{n} arquivo(s) alterado(s)");
+        if coll > 0 {
+            t.push_str(&format!(" · ⚠ {coll} em colisão"));
+        }
+        t.push_str(" · i detalhes");
+        let color = if coll > 0 { collision_color() } else { muted() };
+        lines.push(Line::styled(truncate(&t, w), Style::new().fg(color)));
+    }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -183,8 +203,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
-    // No modo integrado o separador é o do tmux (ADR-0018).
-    let borders = if app.ui.is_some() && area.width < 80 {
+    // Ao lado da sessão o separador é o do tmux (ADR-0018); no Resumo, a borda.
+    let borders = if app.view != View::Summary {
         Borders::NONE
     } else {
         Borders::RIGHT
@@ -332,6 +352,8 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Detalhes da sessão (`i`), em zoom: o painel antigo sem o preview, já que
+/// a sessão está viva ao lado (ADR-0018).
 fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let area = area.inner(ratatui::layout::Margin {
         horizontal: 2,
@@ -377,11 +399,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let col = status_color(st);
     let proj = app.project(&s.project_id);
 
-    let [title, info, middle, preview, notes] = Layout::vertical([
+    let [title, info, middle, notes] = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(8),
-        Constraint::Length(11),
-        Constraint::Min(4),
+        Constraint::Fill(1),
         Constraint::Length(3),
     ])
     .areas(area);
@@ -501,44 +522,6 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(Paragraph::new(lines), cols[i]);
     }
 
-    let alive = app.alive.contains(&s.tmux_name());
-    let pblock = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(border()))
-        .title(Span::styled(" Preview ao vivo ", Style::new().fg(muted())))
-        .title_bottom(
-            Line::styled(" Enter entra · Ctrl-q volta ", Style::new().fg(muted())).right_aligned(),
-        );
-    let pi = pblock.inner(preview);
-    f.render_widget(pblock, preview);
-    if alive {
-        f.render_widget(Paragraph::new(tail(&app.preview, pi.height as usize)), pi);
-    } else {
-        let resume = if s.started_once {
-            "claude --resume"
-        } else {
-            "claude --session-id"
-        };
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    "Sessão suspensa — o processo não está rodando.",
-                    Style::new().fg(muted()),
-                ),
-                Line::raw(""),
-                Line::from(vec![
-                    Span::raw("Enter retoma com "),
-                    Span::styled(
-                        format!("{resume} {}", s.claude_session_id),
-                        Style::new().fg(status_color(Status::Working)),
-                    ),
-                ]),
-                Line::styled(format!("em {}", s.cwd.display()), Style::new().fg(muted())),
-            ]),
-            pi,
-        );
-    }
-
     let notes_text = if s.notes.trim().is_empty() {
         "(sem notas — e para escrever)".to_string()
     } else {
@@ -557,12 +540,6 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         ),
         notes,
     );
-}
-
-fn rounded(color: Color) -> Block<'static> {
-    Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(color))
 }
 
 /// Pedido pendente + última resposta | alterações e colisões (ADR-0007, ADR-0009).
@@ -756,6 +733,12 @@ fn draw_middle(f: &mut Frame, app: &App, s: &crate::model::Session, area: Rect) 
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+fn rounded(color: Color) -> Block<'static> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(color))
+}
+
 fn truncate_left(s: &str, max: usize) -> String {
     let n = s.chars().count();
     if n <= max || max < 2 {
@@ -766,18 +749,6 @@ fn truncate_left(s: &str, max: usize) -> String {
 }
 
 /// Últimas `h` linhas não vazias do capture-pane.
-fn tail(text: &Text<'static>, h: usize) -> Text<'static> {
-    let mut lines = text.lines.clone();
-    while lines
-        .last()
-        .is_some_and(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
-    {
-        lines.pop();
-    }
-    let start = lines.len().saturating_sub(h);
-    Text::from(lines.split_off(start))
-}
-
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if let Some(fl) = &app.flash {
         let style = if fl.error {
@@ -798,7 +769,20 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ]
     };
     let mut spans = Vec::new();
-    if app.ui.is_some() && area.width < 80 {
+    if matches!(app.modal, Modal::Details) {
+        for (key, label) in [
+            ("Esc/i", "fecha"),
+            ("y/x", "aprova/recusa"),
+            ("m", "responde"),
+            ("D", "diff"),
+            ("e", "notas"),
+        ] {
+            spans.extend(k(key, label));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)).bg(panel()), area);
+        return;
+    }
+    if app.view != View::Summary {
         for (key, label) in [
             ("clique/j/k", "sessão"),
             ("Enter", "foca"),
@@ -1290,8 +1274,9 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 .collect();
             f.render_widget(Paragraph::new(lines), inner);
         }
+        Modal::Details => {}
         Modal::Help => {
-            let r = centered(area, 66, 27);
+            let r = centered(area, 66, 28);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -1301,6 +1286,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("y / x", "aprovar / recusar o pedido pendente"),
                 ("m", "responder sem entrar na sessão"),
                 ("D", "diff completo da sessão"),
+                ("i", "detalhes da sessão (resposta, alterações, colisões)"),
                 ("L", "linha do tempo da sessão"),
                 ("t / T", "verificar (verify do .ccdeck.json) / ver o log"),
                 ("w", "janelas da sessão (shell, servidor, logs)"),

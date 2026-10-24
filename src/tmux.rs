@@ -490,16 +490,6 @@ impl Tmux {
             .map(|_| ())
     }
 
-    /// Tela visível do pane, com escapes ANSI (para o preview).
-    pub fn capture(&self, name: &str) -> Option<Vec<u8>> {
-        let out = self
-            .cmd()
-            .args(["capture-pane", "-p", "-e", "-t", &self.target(name)])
-            .output()
-            .ok()?;
-        out.status.success().then_some(out.stdout)
-    }
-
     /// Bloqueia até o usuário sair (Ctrl-q). Dentro de tmux usa um popup.
     /// Entra na sessão, na janela `window` (padrão: a do Claude Code).
     pub fn attach(&self, name: &str, window: Option<&str>) -> Result<ExitStatus> {

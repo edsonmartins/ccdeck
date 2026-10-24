@@ -18,7 +18,7 @@ ccdeck é um gerenciador de sessões do Claude Code no terminal. Ele organiza v�
 
 ## Fora de escopo (por enquanto)
 
-- Renderizar o terminal do Claude Code dentro do ccdeck (emulador próprio). Usamos `tmux attach`.
+- Emulador de terminal próprio dentro do ccdeck. O terminal da sessão é sempre o do tmux: o painel real é mostrado ao lado da árvore (`swap-pane`, ADR-0018).
 - Windows nativo (WSL funciona por ser Linux).
 - Controlar o Claude Code por API/SDK; o ccdeck orquestra a CLI interativa.
 

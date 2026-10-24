@@ -28,9 +28,8 @@ Rodar várias sessões do Claude Code em abas ou splits de terminal vira bagunç
 4. `tmux -L ccdeck new-session -d -s <id-curto> -c <cwd> -e CCDECK_SID=<id> -- claude --session-id <uuid> -n "<projeto>/<nome>" --settings <hooks.json> [--permission-mode X]`.
 5. Estado inicial: Iniciando.
 
-### 4.2 Entrar numa sessão (`Enter`)
-- Fora do tmux: o ccdeck suspende a TUI, executa `tmux -L ccdeck attach -t <id>` e volta quando o usuário sai com `Ctrl-q` (atalho configurado só no servidor do deck).
-- Dentro de tmux: abre um popup (`display-popup`) com o attach, para não aninhar sessões.
+### 4.2 Ver e entrar numa sessão (ADR-0018)
+- `ccdeck` abre a sessão tmux `ccdeck-ui`: árvore à esquerda, a sessão selecionada viva à direita. Selecionar (clique ou `j`/`k`) mostra a sessão; `Enter` põe o foco nela (retomando se suspensa); `Ctrl-q` volta à árvore e, na árvore, desconecta sem parar nada. `i` abre os detalhes da sessão.
 
 ### 4.3 Estados via hooks
 O `hooks.json` registra `ccdeck hook` como comando em todos os eventos abaixo. O subcomando lê o JSON do stdin, pega `CCDECK_SID` do ambiente e grava `~/.local/state/ccdeck/status/<sid>.json` de forma atômica.
@@ -55,7 +54,7 @@ Confirmação com três opções: só encerrar (mantém worktree e branch), ence
 
 ## 5. Telas
 Ver o protótipo navegável das telas (canvas de Design). Resumo:
-- **Principal**: sidebar (projetos e sessões, com ícone de estado) | painel da sessão (cabeçalho com branch, worktree, estado, tempo no estado; preview ao vivo do terminal; notas) | barra de atalhos.
+- **Principal** (ADR-0018): barra lateral (projetos e sessões com ícone de estado; cartão da sessão selecionada) | a sessão selecionada viva, no tmux. **Detalhes** (`i`): branch, worktree, estado, tempo no estado, última resposta, alterações e colisões, portas, notas.
 - **Atenção** (`a`): lista plana só com sessões que precisam de você, ordenadas por tempo de espera.
 - **Nova sessão / Novo projeto**: formulário modal.
 - **Confirmar remoção**, **Notas**, **Ajuda**.

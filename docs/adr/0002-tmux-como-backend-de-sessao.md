@@ -1,6 +1,6 @@
 # ADR-0002 — tmux dedicado como backend das sessões
 
-- Status: Aceito
+- Status: Aceito; a forma de "entrar" (attach suspendendo a TUI) e o preview por `capture-pane` foram substituídos pelo ADR-0018.
 - Data: 2026-10-23
 
 ## Contexto
