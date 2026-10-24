@@ -98,5 +98,6 @@ No macOS os caminhos seguem `directories` (`~/Library/Application Support/...`).
   - `add-quick-reply` — pedido pendente, aprovar/recusar com `y`/`x`, resposta rápida `m`, última resposta (ADR-0007)
   - `add-worktree-setup` — `.ccdeck.json` com cópia de arquivos, `setup` e portas por sessão (ADR-0008)
   - `add-diff-and-collisions` — alterações por sessão, aviso de colisão, diff completo com `D` (ADR-0009)
+  - `fix-state-after-interrupt` — estado depois de recusa/interrupção, que não disparam hook (ADR-0011)
   - `add-usage-summary` — aba Resumo: tokens, custo equivalente em API, cache, tempo esperando você, atividade e arquivos (ADR-0010, **proposto**, aguardando aprovação das telas)
 - **v0.3** — sessão a partir de change do OpenSpec, templates por projeto, verificação por sessão (`t`), entrega com commit/push/PR via `gh` e status do CI, linha do tempo e custo/contexto por sessão, janelas auxiliares, broadcast de prompt.

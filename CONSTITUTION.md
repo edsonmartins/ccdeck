@@ -9,7 +9,7 @@ ccdeck é um gerenciador de sessões do Claude Code no terminal. Ele organiza v�
 ## Invariantes
 
 1. **O ccdeck nunca é dono do processo do Claude Code.** As sessões rodam num servidor tmux dedicado (`tmux -L ccdeck`). Fechar, travar ou atualizar o ccdeck não mata nenhuma sessão. (ADR-0002)
-2. **Nada de parsing de tela para saber estado.** O estado de uma sessão vem exclusivamente de hooks oficiais do Claude Code. A captura de tela serve só para preview. (ADR-0004)
+2. **Nada de parsing de tela para saber estado.** O estado de uma sessão vem de hooks oficiais do Claude Code ou de ações que o próprio ccdeck executou (ex.: recusa via `x`). A captura de tela serve só para preview. (ADR-0004, ADR-0011)
 3. **Não tocar na configuração do usuário.** O ccdeck não edita `~/.claude/settings.json`, `.claude/settings.json` do projeto nem o `~/.tmux.conf`. Hooks entram via `--settings` na linha de comando; tmux usa socket e config próprios. (ADR-0004, ADR-0002)
 4. **Uma sessão, um worktree, um branch.** Sessões que pedem isolamento rodam num worktree próprio. Remoção de worktree só acontece com confirmação explícita e nunca com alterações não commitadas, a não ser que o usuário force. (ADR-0003)
 5. **Estado local, legível e versionado.** Todo estado persistente fica em arquivos JSON locais com `schema_version`. Nada sai da máquina; não há telemetria. (ADR-0005)
