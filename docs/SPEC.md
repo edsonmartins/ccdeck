@@ -112,4 +112,5 @@ No macOS os caminhos seguem `directories` (`~/Library/Application Support/...`).
   - `add-session-starters` — modelos de sessão e sessão a partir de change do OpenSpec (ADR-0014)
   - `add-aux-windows` — janelas auxiliares por sessão `w` (ADR-0015)
   - `add-broadcast` — mesmo prompt para várias sessões em *Aguardando você* `B` (ADR-0016)
+  - `add-delivery` — entrega com commit, push e PR via `gh`, e status do CI `E` (ADR-0017)
 - **v0.3 (restante)** — sessão a partir de change do OpenSpec, templates por projeto, verificação por sessão (`t`), entrega com commit/push/PR via `gh` e status do CI, linha do tempo e custo/contexto por sessão, janelas auxiliares, broadcast de prompt.
