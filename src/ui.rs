@@ -738,6 +738,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     }
     if sel_status.is_some() {
         keys.push(("t", "verificar"));
+        keys.push(("w", "janelas"));
         keys.push(("D", "diff"));
         keys.push(("L", "linha do tempo"));
     }
@@ -800,6 +801,75 @@ fn draw_modal(f: &mut Frame, app: &App) {
     let area = f.area();
     match &app.modal {
         Modal::None | Modal::Filter => {}
+        Modal::Windows {
+            session,
+            items,
+            cursor,
+            confirm,
+        } => {
+            use crate::windows::Kind;
+            let name = app
+                .state
+                .sessions
+                .iter()
+                .find(|s| &s.id == session)
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            let r = centered(area, 96, items.len() as u16 + 6);
+            f.render_widget(Clear, r);
+            let block = modal_block(format!("Janelas · {name}"), accent()).title_bottom(
+                Line::styled(
+                    " Enter abre/entra · K fecha · Ctrl-q volta ao ccdeck · Esc ",
+                    Style::new().fg(muted()),
+                )
+                .right_aligned(),
+            );
+            let inner = block.inner(r);
+            f.render_widget(block, r);
+            let mut lines: Vec<Line> = items
+                .iter()
+                .enumerate()
+                .map(|(i, it)| {
+                    let sel = i == *cursor;
+                    let mark = if it.open { "●" } else { "○" };
+                    let kind = match it.kind {
+                        Kind::Claude => "Claude Code",
+                        Kind::Shell => "shell no worktree",
+                        Kind::Project => ".ccdeck.json",
+                        Kind::Other => "existente",
+                    };
+                    let detail = it.command.clone().unwrap_or_default();
+                    let warn = confirm.as_deref() == Some(it.name.as_str());
+                    let mut spans = vec![
+                        Span::styled(if sel { " › " } else { "   " }, Style::new().fg(accent())),
+                        Span::styled(
+                            format!("{mark} "),
+                            Style::new().fg(if it.open { added_color() } else { muted() }),
+                        ),
+                        Span::styled(format!("{:<16}", it.name), Style::new().fg(fg()).bold()),
+                        Span::styled(format!("{kind:<20}"), Style::new().fg(muted())),
+                        Span::styled(truncate(&detail, 30), Style::new().fg(muted())),
+                    ];
+                    if warn {
+                        spans.push(Span::styled(
+                            "  K de novo fecha",
+                            Style::new().fg(status_color(Status::Error)).bold(),
+                        ));
+                    }
+                    let line = Line::from(spans);
+                    if sel { line.bg(sel_bg()) } else { line }
+                })
+                .collect();
+            lines.insert(
+                0,
+                Line::styled(
+                    " ● aberta  ○ será criada no worktree, com o ambiente da sessão",
+                    Style::new().fg(muted()),
+                ),
+            );
+            lines.insert(1, Line::raw(""));
+            f.render_widget(Paragraph::new(lines), inner);
+        }
         Modal::Timeline {
             name,
             entries,
@@ -860,7 +930,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
             f.render_widget(Paragraph::new(lines), inner);
         }
         Modal::Help => {
-            let r = centered(area, 66, 24);
+            let r = centered(area, 66, 25);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -872,6 +942,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("D", "diff completo da sessão"),
                 ("L", "linha do tempo da sessão"),
                 ("t / T", "verificar (verify do .ccdeck.json) / ver o log"),
+                ("w", "janelas da sessão (shell, servidor, logs)"),
                 ("n / N", "nova sessão / novo projeto"),
                 ("a", "alternar visão Atenção"),
                 ("Tab", "Projetos → Atenção → Resumo"),

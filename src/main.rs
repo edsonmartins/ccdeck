@@ -18,6 +18,7 @@ mod tmux;
 mod transcript;
 mod ui;
 mod usage;
+mod windows;
 
 use std::process::Command;
 use std::time::Duration;
@@ -96,7 +97,8 @@ fn run_tui(paths: Paths) -> Result<()> {
             }
             if let Some(name) = app.pending_attach.take() {
                 ratatui::restore();
-                let r = app.tmux.attach(&name);
+                let window = app.pending_window.take();
+                let r = app.tmux.attach(&name, window.as_deref());
                 terminal = ratatui::init();
                 terminal.clear()?;
                 app.after_attach(r);

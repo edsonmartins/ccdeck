@@ -23,6 +23,7 @@ Leia antes de qualquer mudança: `CONSTITUTION.md` (invariantes), `docs/SPEC.md`
 - `summary.rs` — agregados da aba Resumo (funções puras).
 - `timeline.rs` — linha do tempo da sessão (eventos + `actions.log` + compactações).
 - `openspec.rs` — changes do OpenSpec do repositório (título, progresso, prompt).
+- `windows.rs` — janelas auxiliares da sessão (lista do modal `w`).
 - `store.rs` (migrações de schema), `paths.rs`, `model.rs`, `input.rs`, `notify.rs`.
 
 ## Changes

@@ -73,6 +73,7 @@ Ver o protótipo navegável das telas (canvas de Design). Resumo:
 | `p` | período do Resumo (hoje / 7 / 30 dias) |
 | `L` | linha do tempo da sessão |
 | `t` / `T` | verificação da sessão / log |
+| `w` | janelas auxiliares da sessão |
 | `e` | editar notas |
 | `r` | renomear |
 | `d` | remover |

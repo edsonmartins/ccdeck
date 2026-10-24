@@ -21,6 +21,8 @@ pub struct ProjectConfig {
     pub templates: Vec<Template>,
     /// Prompt para sessão a partir de change do OpenSpec; `{id}` e `{dir}`.
     pub openspec_prompt: Option<String>,
+    /// Janelas auxiliares da sessão: nome → comando (ADR-0015).
+    pub windows: BTreeMap<String, String>,
     pub env: BTreeMap<String, String>,
     pub ports: Option<Ports>,
 }
@@ -131,6 +133,7 @@ pub const TEMPLATE: &str = r#"{
   "copy": [".env"],
   "setup": "",
   "verify": "",
+  "windows": { "servidor": "npm run dev" },
   "templates": [
     { "name": "revisar", "prompt": "Revise as mudanças deste branch contra a base e aponte problemas antes de eu abrir o PR.", "mode": "plan" }
   ],

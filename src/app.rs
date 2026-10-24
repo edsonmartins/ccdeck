@@ -171,6 +171,13 @@ pub enum Modal {
     },
     Filter,
     Help,
+    /// Janelas da sessão (ADR-0015). `confirm` = janela aguardando o segundo `K`.
+    Windows {
+        session: String,
+        items: Vec<crate::windows::WinItem>,
+        cursor: usize,
+        confirm: Option<String>,
+    },
     /// Linha do tempo da sessão (ADR-0012), montada ao abrir.
     Timeline {
         name: String,
@@ -200,6 +207,8 @@ pub struct App {
     pub preview: Text<'static>,
     pub quit: bool,
     pub pending_attach: Option<String>,
+    /// Janela em que o attach entra (ADR-0015); `None` = a do Claude Code.
+    pub pending_window: Option<String>,
     /// Comando a rodar com a TUI suspensa (diff completo): (diretório, comando).
     pub pending_shell: Option<(PathBuf, String)>,
     pub scanner: Scanner,
@@ -243,6 +252,7 @@ impl App {
             preview: Text::default(),
             quit: false,
             pending_attach: None,
+            pending_window: None,
             pending_shell: None,
             scanner: Scanner::default(),
             usage: UsageScanner::default(),
@@ -802,6 +812,70 @@ impl App {
             }
             Err(e) => self.error(format!("falha ao enviar teclas: {e:#}")),
         }
+    }
+
+    /// Lista de janelas da sessão, ou `None` se a sessão tmux não existe.
+    /// `warn` = avisar de nomes reservados (só ao abrir o modal).
+    fn window_list(&mut self, sid: &str, warn: bool) -> Option<Vec<crate::windows::WinItem>> {
+        let s = self.state.sessions.iter().find(|s| s.id == sid)?.clone();
+        let existing = self.tmux.windows(&s.tmux_name());
+        if existing.is_empty() {
+            return None;
+        }
+        let configured = self
+            .project(&s.project_id)
+            .and_then(|p| ProjectConfig::load(&p.path).ok())
+            .map(|c| c.windows)
+            .unwrap_or_default();
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
+        let (items, ignored) = crate::windows::items(&existing, &configured, &shell);
+        if warn && !ignored.is_empty() {
+            self.error(format!(
+                "{}: nomes reservados ignorados em windows: {}",
+                project::FILE,
+                ignored.join(", ")
+            ));
+        }
+        Some(items)
+    }
+
+    /// `w`: janelas da sessão (ADR-0015).
+    pub fn open_windows(&mut self) {
+        let Some(s) = self.selected_session().cloned() else {
+            return;
+        };
+        if !self.alive.contains(&s.tmux_name()) {
+            self.error("a sessão não está rodando — Enter retoma antes");
+            return;
+        }
+        if let Some(items) = self.window_list(&s.id, true) {
+            self.modal = Modal::Windows {
+                session: s.id,
+                items,
+                cursor: 0,
+                confirm: None,
+            };
+        }
+    }
+
+    /// Cria a janela se preciso e agenda o attach nela.
+    fn enter_window(&mut self, sid: &str, item: &crate::windows::WinItem) -> Result<()> {
+        let s = self
+            .state
+            .sessions
+            .iter()
+            .find(|s| s.id == sid)
+            .cloned()
+            .context("sessão não existe")?;
+        if !item.open {
+            let cmd = item.command.as_deref().context("janela sem comando")?;
+            self.tmux
+                .new_window(&s.tmux_name(), &item.name, &s.cwd, cmd)?;
+        }
+        self.pending_window =
+            (item.kind != crate::windows::Kind::Claude).then(|| item.name.clone());
+        self.pending_attach = Some(s.tmux_name());
+        Ok(())
     }
 
     /// `L`: eventos, ações e compactações da sessão (ADR-0012).
@@ -1436,6 +1510,106 @@ impl App {
                 self.handle_normal(key);
                 return;
             }
+            Modal::Windows {
+                session,
+                items,
+                mut cursor,
+                confirm,
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('w') => Modal::None,
+                KeyCode::Down | KeyCode::Char('j') => {
+                    cursor = (cursor + 1).min(items.len().saturating_sub(1));
+                    Modal::Windows {
+                        session,
+                        items,
+                        cursor,
+                        confirm: None,
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    cursor = cursor.saturating_sub(1);
+                    Modal::Windows {
+                        session,
+                        items,
+                        cursor,
+                        confirm: None,
+                    }
+                }
+                KeyCode::Enter => match items.get(cursor) {
+                    Some(item) => match self.enter_window(&session, item) {
+                        Ok(()) => Modal::None,
+                        Err(e) => {
+                            self.error(format!("não foi possível abrir {}: {e:#}", item.name));
+                            Modal::Windows {
+                                session,
+                                items,
+                                cursor,
+                                confirm,
+                            }
+                        }
+                    },
+                    None => Modal::None,
+                },
+                KeyCode::Char('K') => {
+                    let Some(item) = items.get(cursor).cloned() else {
+                        return;
+                    };
+                    if item.kind == crate::windows::Kind::Claude {
+                        self.error("a janela claude não fecha por aqui — d encerra a sessão");
+                        Modal::Windows {
+                            session,
+                            items,
+                            cursor,
+                            confirm: None,
+                        }
+                    } else if !item.open {
+                        Modal::Windows {
+                            session,
+                            items,
+                            cursor,
+                            confirm: None,
+                        }
+                    } else if confirm.as_deref() == Some(item.name.as_str()) {
+                        let tname = self
+                            .state
+                            .sessions
+                            .iter()
+                            .find(|s| s.id == session)
+                            .map(Session::tmux_name)
+                            .unwrap_or_default();
+                        match self.tmux.kill_window(&tname, &item.name) {
+                            Ok(()) => self.info(format!("janela {} fechada", item.name)),
+                            Err(e) => self.error(format!("falha ao fechar {}: {e:#}", item.name)),
+                        }
+                        match self.window_list(&session, false) {
+                            Some(items) => {
+                                let cursor = cursor.min(items.len().saturating_sub(1));
+                                Modal::Windows {
+                                    session,
+                                    items,
+                                    cursor,
+                                    confirm: None,
+                                }
+                            }
+                            None => Modal::None,
+                        }
+                    } else {
+                        self.info(format!("K de novo fecha a janela {}", item.name));
+                        Modal::Windows {
+                            session,
+                            items,
+                            cursor,
+                            confirm: Some(item.name),
+                        }
+                    }
+                }
+                _ => Modal::Windows {
+                    session,
+                    items,
+                    cursor,
+                    confirm,
+                },
+            },
             Modal::Timeline {
                 name,
                 entries,
@@ -1643,6 +1817,7 @@ impl App {
             KeyCode::Char('D') => self.open_diff(),
             KeyCode::Char('L') => self.open_timeline(),
             KeyCode::Char('t') => self.run_verify(),
+            KeyCode::Char('w') => self.open_windows(),
             KeyCode::Char('T') => self.open_verify_log(),
             KeyCode::Char('/') => self.modal = Modal::Filter,
             KeyCode::Char('?') => self.modal = Modal::Help,

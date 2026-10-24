@@ -51,6 +51,7 @@ ccdeck            # abre a TUI
 | `D` | diff completo da sessão (`diff_command`) |
 | `L` | linha do tempo da sessão (eventos, ações do ccdeck, compactações) |
 | `t` / `T` | roda o `verify` do `.ccdeck.json` no worktree / abre o log |
+| `w` | janelas da sessão: shell no worktree, `windows` do `.ccdeck.json` (Enter entra, K fecha) |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
 | `Enter` | entrar na sessão (retoma se suspensa) |
 | `Ctrl-q` | dentro da sessão: voltar ao ccdeck |
@@ -73,6 +74,7 @@ Opcional, na raiz do repositório e versionado com o projeto (`ccdeck init-proje
   "copy": [".env", "config/application-local.yml"],
   "setup": "npm ci",
   "verify": "npm test",
+  "windows": { "servidor": "npm run dev" },
   "templates": [{ "name": "revisar", "prompt": "Revise as mudanças deste branch.", "mode": "plan" }],
   "env": { "SPRING_PROFILES_ACTIVE": "dev" },
   "ports": { "base": 8080, "step": 10, "vars": ["PORT", "SERVER_PORT"] }
@@ -82,6 +84,7 @@ Opcional, na raiz do repositório e versionado com o projeto (`ccdeck init-proje
 - `copy`: arquivos ignorados pelo git copiados para o worktree novo.
 - `setup`: roda numa janela `setup` da sessão, em paralelo; o painel mostra rodando/ok/falhou.
 - `templates` e `openspec_prompt`: o campo **Modelo** da nova sessão oferece os templates e os changes de `openspec/changes/` (com título e progresso das tarefas); escolher um preenche nome, prompt e modo. `openspec_prompt` aceita `{id}` e `{dir}`.
+- `windows`: janelas auxiliares abertas com `w` (nome → comando), no worktree e com as portas da sessão; `shell` sempre aparece.
 - `verify`: roda com `t` numa janela `verify` da sessão (sessão precisa estar viva); o painel mostra rodando/ok/falhou com a duração, avisa ao terminar e `T` abre o log.
 - `ports`: cada sessão ganha um slot (1, 2, 3…) e as variáveis valem `base + slot*step + i`. Duas sessões sobem a aplicação sem colidir.
 - `env`: variáveis extras. Tudo entra no ambiente do Claude Code e dos comandos que ele roda.

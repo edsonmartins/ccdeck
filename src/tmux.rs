@@ -92,6 +92,24 @@ impl Tmux {
         .unwrap_or_default()
     }
 
+    /// Nomes das janelas da sessão.
+    pub fn windows(&self, name: &str) -> Vec<String> {
+        self.run(&[
+            "list-windows",
+            "-t",
+            &format!("={name}"),
+            "-F",
+            "#{window_name}",
+        ])
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+    }
+
+    pub fn kill_window(&self, name: &str, window: &str) -> Result<()> {
+        self.run(&["kill-window", "-t", &format!("={name}:{window}")])
+            .map(|_| ())
+    }
+
     pub fn has_window(&self, name: &str, window: &str) -> bool {
         self.run(&[
             "list-windows",
@@ -225,8 +243,13 @@ impl Tmux {
     }
 
     /// Bloqueia até o usuário sair (Ctrl-q). Dentro de tmux usa um popup.
-    pub fn attach(&self, name: &str) -> Result<ExitStatus> {
-        let _ = self.run(&["select-window", "-t", &Self::claude_target(name)]);
+    /// Entra na sessão, na janela `window` (padrão: a do Claude Code).
+    pub fn attach(&self, name: &str, window: Option<&str>) -> Result<ExitStatus> {
+        let target = match window {
+            Some(w) => format!("={name}:{w}"),
+            None => Self::claude_target(name),
+        };
+        let _ = self.run(&["select-window", "-t", &target]);
         if std::env::var_os("TMUX").is_some() {
             let inner = format!(
                 "env -u TMUX tmux -u -L {SOCKET} -f {} attach -t {}",
