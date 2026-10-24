@@ -22,7 +22,7 @@ use crate::paths::Paths;
 use crate::project::{self, ProjectConfig};
 use crate::store;
 use crate::summary::{self, Period, Summary};
-use crate::tmux::{SETUP_WINDOW, Tmux};
+use crate::tmux::{SETUP_WINDOW, Tmux, VERIFY_WINDOW};
 use crate::usage::{self, UsageScanner};
 
 const LIST_EVERY: Duration = Duration::from_secs(2);
@@ -47,12 +47,92 @@ pub struct Runtime {
     pub record: Option<StatusRecord>,
 }
 
+/// Estado de uma tarefa numa janela tmux da sessão (setup, verify).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SetupState {
+pub enum TaskState {
     Running,
     Ok,
     Failed(i32),
     Interrupted,
+}
+
+/// Tarefas que rodam numa janela própria da sessão (ADR-0008, ADR-0013).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Task {
+    Setup,
+    Verify,
+}
+
+impl Task {
+    fn dir(self) -> &'static str {
+        match self {
+            Task::Setup => "setup",
+            Task::Verify => "verify",
+        }
+    }
+
+    pub fn window(self) -> &'static str {
+        match self {
+            Task::Setup => SETUP_WINDOW,
+            Task::Verify => VERIFY_WINDOW,
+        }
+    }
+}
+
+pub struct TaskFiles {
+    pub log: PathBuf,
+    pub exit: PathBuf,
+    pub start: PathBuf,
+}
+
+impl TaskFiles {
+    pub fn new(paths: &Paths, task: Task, sid: &str) -> Self {
+        let dir = paths.state_dir.join(task.dir());
+        Self {
+            log: dir.join(format!("{sid}.log")),
+            exit: dir.join(format!("{sid}.exit")),
+            start: dir.join(format!("{sid}.start")),
+        }
+    }
+
+    /// `None` = nunca rodou. `window_alive` = a janela da tarefa existe.
+    pub fn state(&self, window_alive: bool) -> Option<TaskState> {
+        if let Ok(code) = std::fs::read_to_string(&self.exit) {
+            return Some(match code.trim().parse::<i32>() {
+                Ok(0) => TaskState::Ok,
+                Ok(c) => TaskState::Failed(c),
+                Err(_) => TaskState::Failed(-1),
+            });
+        }
+        if !self.log.exists() {
+            return None;
+        }
+        Some(if window_alive {
+            TaskState::Running
+        } else {
+            TaskState::Interrupted
+        })
+    }
+
+    /// Do início gravado até o código de saída (ou até agora, se rodando).
+    pub fn duration(&self) -> Option<chrono::Duration> {
+        let start: DateTime<Utc> = std::fs::read_to_string(&self.start)
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        let end: DateTime<Utc> = std::fs::metadata(&self.exit)
+            .and_then(|m| m.modified())
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(|_| Utc::now());
+        Some(end - start)
+    }
+
+    fn remove(&self) {
+        for f in [&self.log, &self.exit, &self.start] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +210,8 @@ pub struct App {
     pub summary: Option<Summary>,
     pub summary_today: Option<Summary>,
     summary_at: Option<Instant>,
+    /// Último estado visto da verificação de cada sessão (para avisar ao terminar).
+    verify_seen: HashMap<String, TaskState>,
     /// Sessão → arquivo → outras sessões que alteraram o mesmo arquivo.
     pub collisions: HashMap<String, BTreeMap<String, Vec<String>>>,
     /// id do pedido → quando apareceu na tela pela primeira vez.
@@ -168,6 +250,7 @@ impl App {
             summary: None,
             summary_today: None,
             summary_at: None,
+            verify_seen: HashMap::new(),
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
             msg_cache: HashMap::new(),
@@ -267,6 +350,13 @@ impl App {
         self.items().get(self.cursor).copied()
     }
 
+    fn selected_index(&self) -> Option<usize> {
+        match self.selected()? {
+            Item::Session(i) => Some(i),
+            Item::Project(_) => None,
+        }
+    }
+
     pub fn selected_session(&self) -> Option<&Session> {
         match self.selected()? {
             Item::Session(i) => self.state.sessions.get(i),
@@ -290,6 +380,7 @@ impl App {
         self.update_changes();
         self.update_usage();
         self.update_summary();
+        self.check_verify();
         self.mark_seen_pending();
         self.update_last_message();
         if let Some(f) = &self.flash
@@ -525,33 +616,106 @@ impl App {
         self.msg_cache.insert(id, (mtime, msg));
     }
 
-    fn setup_files(&self, sid: &str) -> (PathBuf, PathBuf) {
-        let dir = self.paths.state_dir.join("setup");
-        (
-            dir.join(format!("{sid}.log")),
-            dir.join(format!("{sid}.exit")),
-        )
+    pub fn task_files(&self, task: Task, sid: &str) -> TaskFiles {
+        TaskFiles::new(&self.paths, task, sid)
     }
 
-    /// Estado do setup do worktree (ADR-0008). `None` = sem setup.
-    pub fn setup_state(&self, s: &Session) -> Option<SetupState> {
-        let (log, exit) = self.setup_files(&s.id);
-        if let Ok(code) = std::fs::read_to_string(&exit) {
-            return Some(match code.trim().parse::<i32>() {
-                Ok(0) => SetupState::Ok,
-                Ok(c) => SetupState::Failed(c),
-                Err(_) => SetupState::Failed(-1),
-            });
+    /// Estado do setup (ADR-0008) ou da verificação (ADR-0013). `None` = nunca rodou.
+    pub fn task_state(&self, task: Task, s: &Session) -> Option<TaskState> {
+        let files = self.task_files(task, &s.id);
+        // Só consulta o tmux quando não há código de saída.
+        if files.exit.exists() || !files.log.exists() {
+            return files.state(false);
         }
+        files.state(self.tmux.has_window(&s.tmux_name(), task.window()))
+    }
+
+    /// `t`: roda o `verify` do `.ccdeck.json` no worktree (ADR-0013).
+    pub fn run_verify(&mut self) {
+        let Some(idx) = self.selected_index() else {
+            return;
+        };
+        let s = self.state.sessions[idx].clone();
+        let Some(project) = self.project(&s.project_id).cloned() else {
+            return;
+        };
+        let cmd = match ProjectConfig::load(&project.path) {
+            Ok(cfg) => cfg.verify.filter(|v| !v.trim().is_empty()),
+            Err(e) => {
+                self.error(format!("{}: {e:#}", project::FILE));
+                return;
+            }
+        };
+        let Some(cmd) = cmd else {
+            self.error(format!(
+                "sem verify em {} — ex.: \"verify\": \"npm test\"",
+                project::FILE
+            ));
+            return;
+        };
+        if !self.alive.contains(&s.tmux_name()) {
+            self.error("a sessão não está rodando — Enter retoma antes de verificar");
+            return;
+        }
+        if self.task_state(Task::Verify, &s) == Some(TaskState::Running) {
+            self.error("a verificação desta sessão ainda está rodando");
+            return;
+        }
+        match self.run_task(idx, Task::Verify, &cmd) {
+            Ok(()) => {
+                self.verify_seen.insert(s.id.clone(), TaskState::Running);
+                self.info(format!("verificando {}: {cmd} (janela verify)", s.name));
+            }
+            Err(e) => self.error(format!("não foi possível verificar: {e:#}")),
+        }
+    }
+
+    /// `T`: abre o log da última verificação.
+    pub fn open_verify_log(&mut self) {
+        let Some(s) = self.selected_session().cloned() else {
+            return;
+        };
+        let log = self.task_files(Task::Verify, &s.id).log;
         if !log.exists() {
-            return None;
+            self.error("nenhuma verificação rodou nesta sessão (t roda)");
+            return;
         }
-        let any_window = self.tmux.has_window(&s.tmux_name(), SETUP_WINDOW);
-        Some(if any_window {
-            SetupState::Running
-        } else {
-            SetupState::Interrupted
-        })
+        self.pending_shell = Some((
+            s.cwd.clone(),
+            format!("less -R +G {}", shell_quote(&log.to_string_lossy())),
+        ));
+    }
+
+    /// Avisa quando uma verificação termina (ADR-0013).
+    fn check_verify(&mut self) {
+        let mut done = Vec::new();
+        for s in &self.state.sessions {
+            let Some(st) = self.task_state(Task::Verify, s) else {
+                continue;
+            };
+            let prev = self.verify_seen.insert(s.id.clone(), st.clone());
+            if prev == Some(TaskState::Running) && st != TaskState::Running {
+                done.push((s.name.clone(), st));
+            }
+        }
+        for (name, st) in done {
+            let (msg, err) = match st {
+                TaskState::Ok => (format!("verificação de {name}: ok"), false),
+                TaskState::Failed(c) => (
+                    format!("verificação de {name}: falhou (código {c}) — T abre o log"),
+                    true,
+                ),
+                _ => (format!("verificação de {name}: interrompida"), true),
+            };
+            if self.config.notifications {
+                notify::desktop("ccdeck · verificação", &msg);
+            }
+            if err {
+                self.error(msg);
+            } else {
+                self.info(msg);
+            }
+        }
     }
 
     /// Registra ações enviadas às sessões (auditoria do `y`/`x`/`m`).
@@ -1000,7 +1164,7 @@ impl App {
         self.save();
         self.start(idx, Some(prompt).filter(|p| !p.is_empty()))?;
         if use_worktree && let Some(setup) = cfg.setup.as_deref().filter(|s| !s.trim().is_empty()) {
-            match self.run_setup(idx, setup) {
+            match self.run_task(idx, Task::Setup, setup) {
                 Ok(()) => notes.push("setup rodando na janela setup".into()),
                 Err(e) => notes.push(format!("setup não iniciou: {e:#}")),
             }
@@ -1085,15 +1249,17 @@ impl App {
         env
     }
 
-    /// Roda o `setup` numa janela própria, gravando log e código de saída.
-    fn run_setup(&mut self, idx: usize, setup: &str) -> Result<()> {
+    /// Roda uma tarefa numa janela própria, gravando log, início e código de saída.
+    fn run_task(&mut self, idx: usize, task: Task, setup: &str) -> Result<()> {
         let s = self.state.sessions[idx].clone();
-        let (log, exit) = self.setup_files(&s.id);
+        let files = self.task_files(task, &s.id);
+        let (log, exit) = (&files.log, &files.exit);
         if let Some(dir) = log.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let _ = std::fs::remove_file(&exit);
-        std::fs::write(&log, format!("$ {setup}\n"))?;
+        let _ = std::fs::remove_file(exit);
+        std::fs::write(&files.start, Utc::now().to_rfc3339())?;
+        std::fs::write(log, format!("$ {setup}\n"))?;
         let script = format!(
             "({setup}) 2>&1 | tee -a {log}; echo ${{PIPESTATUS[0]}} > {exit}",
             log = shell_quote(&log.to_string_lossy()),
@@ -1101,7 +1267,7 @@ impl App {
         );
         let cmd = format!("bash -c {}", shell_quote(&script));
         self.tmux
-            .new_window(&s.tmux_name(), SETUP_WINDOW, &s.cwd, &cmd)
+            .new_window(&s.tmux_name(), task.window(), &s.cwd, &cmd)
     }
 
     fn label(&self, s: &Session) -> String {
@@ -1189,9 +1355,9 @@ impl App {
             let _ = self.tmux.kill(&s.tmux_name());
         }
         store::remove_status(&self.paths, &s.id);
-        let (log, exit) = self.setup_files(&s.id);
-        let _ = std::fs::remove_file(log);
-        let _ = std::fs::remove_file(exit);
+        self.task_files(Task::Setup, &s.id).remove();
+        self.task_files(Task::Verify, &s.id).remove();
+        self.verify_seen.remove(&s.id);
         self.runtime.remove(&s.id);
         self.scanner.results.remove(&s.id);
         self.usage.hours.remove(&s.id);
@@ -1433,6 +1599,8 @@ impl App {
             KeyCode::Char('m') => self.open_reply(),
             KeyCode::Char('D') => self.open_diff(),
             KeyCode::Char('L') => self.open_timeline(),
+            KeyCode::Char('t') => self.run_verify(),
+            KeyCode::Char('T') => self.open_verify_log(),
             KeyCode::Char('/') => self.modal = Modal::Filter,
             KeyCode::Char('?') => self.modal = Modal::Help,
             KeyCode::Esc => {
@@ -1499,5 +1667,36 @@ mod tests {
         assert_eq!(stale_minutes(Status::Working, ha(7), now), Some(7));
         assert_eq!(stale_minutes(Status::Approval, ha(30), now), None);
         assert_eq!(stale_minutes(Status::Yours, ha(30), now), None);
+    }
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+
+    #[test]
+    fn estados_e_duracao_da_tarefa() {
+        let dir = std::env::temp_dir().join(format!("ccdeck-task-{}", short_id()));
+        let paths = Paths::rooted(&dir);
+        let f = TaskFiles::new(&paths, Task::Verify, "s");
+        assert_eq!(f.state(false), None, "nunca rodou");
+        std::fs::create_dir_all(f.log.parent().unwrap()).unwrap();
+        std::fs::write(&f.log, "$ npm test\n").unwrap();
+        std::fs::write(
+            &f.start,
+            (Utc::now() - chrono::Duration::seconds(12)).to_rfc3339(),
+        )
+        .unwrap();
+        assert_eq!(f.state(true), Some(TaskState::Running));
+        assert_eq!(f.state(false), Some(TaskState::Interrupted));
+        std::fs::write(&f.exit, "1\n").unwrap();
+        assert_eq!(f.state(true), Some(TaskState::Failed(1)));
+        std::fs::write(&f.exit, "0\n").unwrap();
+        assert_eq!(f.state(false), Some(TaskState::Ok));
+        let d = f.duration().unwrap().num_seconds();
+        assert!((11..=14).contains(&d), "{d}");
+        f.remove();
+        assert_eq!(f.state(false), None);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

@@ -15,6 +15,8 @@ pub const FILE: &str = ".ccdeck.json";
 pub struct ProjectConfig {
     pub copy: Vec<String>,
     pub setup: Option<String>,
+    /// Comando de verificação rodado com `t` (ADR-0013).
+    pub verify: Option<String>,
     pub env: BTreeMap<String, String>,
     pub ports: Option<Ports>,
 }
@@ -115,6 +117,7 @@ pub fn copy_files(repo: &Path, worktree: &Path, items: &[String]) -> (Vec<String
 pub const TEMPLATE: &str = r#"{
   "copy": [".env"],
   "setup": "",
+  "verify": "",
   "env": {},
   "ports": { "base": 8080, "step": 10, "vars": ["PORT"] }
 }

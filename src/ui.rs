@@ -8,7 +8,7 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
-use crate::app::{App, Item, Modal, SetupState, View, ago};
+use crate::app::{App, Item, Modal, Task, TaskState, View, ago};
 use crate::input::Field;
 use crate::model::{PERMISSION_MODES, Status, permission_mode_label};
 
@@ -386,12 +386,12 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         Some(n) => format!("Portas (slot {n})"),
         None => "Portas".into(),
     };
-    let setup = match app.setup_state(s) {
+    let setup = match app.task_state(Task::Setup, s) {
         None => "—".to_string(),
-        Some(SetupState::Running) => "rodando… (janela setup)".into(),
-        Some(SetupState::Ok) => "ok".into(),
-        Some(SetupState::Failed(c)) => format!("falhou (código {c})"),
-        Some(SetupState::Interrupted) => "interrompido".into(),
+        Some(TaskState::Running) => "rodando… (janela setup)".into(),
+        Some(TaskState::Ok) => "ok".into(),
+        Some(TaskState::Failed(c)) => format!("falhou (código {c})"),
+        Some(TaskState::Interrupted) => "interrompido".into(),
     };
     let col_lines = [
         [
@@ -410,10 +410,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         [
             kv("No estado há", since),
             kv("Último evento", event),
-            kv(
-                "Base do diff",
-                s.base.clone().unwrap_or_else(|| "HEAD".into()),
-            ),
+            kv("Verificação", verify_text(app, s)),
         ],
     ];
     for (i, group) in col_lines.into_iter().enumerate() {
@@ -740,6 +737,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         _ => {}
     }
     if sel_status.is_some() {
+        keys.push(("t", "verificar"));
         keys.push(("D", "diff"));
         keys.push(("L", "linha do tempo"));
     }
@@ -862,7 +860,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
             f.render_widget(Paragraph::new(lines), inner);
         }
         Modal::Help => {
-            let r = centered(area, 66, 23);
+            let r = centered(area, 66, 24);
             f.render_widget(Clear, r);
             let rows = [
                 ("j/k ↑/↓", "navegar"),
@@ -873,6 +871,7 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("m", "responder sem entrar na sessão"),
                 ("D", "diff completo da sessão"),
                 ("L", "linha do tempo da sessão"),
+                ("t / T", "verificar (verify do .ccdeck.json) / ver o log"),
                 ("n / N", "nova sessão / novo projeto"),
                 ("a", "alternar visão Atenção"),
                 ("Tab", "Projetos → Atenção → Resumo"),
@@ -1222,6 +1221,19 @@ fn compact_usage(app: &App, sid: &str) -> Option<String> {
     }
     parts.push(format!("espera {}", fmt_dur(row.waiting)));
     Some(parts.join(" · "))
+}
+
+/// Estado da verificação no painel (ADR-0013).
+fn verify_text(app: &App, s: &crate::model::Session) -> String {
+    let files = app.task_files(Task::Verify, &s.id);
+    let dur = || files.duration().map(fmt_secs).unwrap_or_default();
+    match app.task_state(Task::Verify, s) {
+        None => "— t verifica".into(),
+        Some(TaskState::Running) => format!("rodando… {} (janela verify)", dur()),
+        Some(TaskState::Ok) => format!("ok ({}) · T log", dur()),
+        Some(TaskState::Failed(c)) => format!("falhou (código {c}) · T log"),
+        Some(TaskState::Interrupted) => "interrompida · T log".into(),
+    }
 }
 
 /// `contexto 45% (452,0k / 1M) · 2 compactações` e se passou de 85% (ADR-0012).

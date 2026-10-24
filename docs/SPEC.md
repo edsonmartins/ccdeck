@@ -71,6 +71,8 @@ Ver o protótipo navegável das telas (canvas de Design). Resumo:
 | `a` | alternar visão Atenção |
 | `Tab` | Projetos → Atenção → Resumo |
 | `p` | período do Resumo (hoje / 7 / 30 dias) |
+| `L` | linha do tempo da sessão |
+| `t` / `T` | verificação da sessão / log |
 | `e` | editar notas |
 | `r` | renomear |
 | `d` | remover |

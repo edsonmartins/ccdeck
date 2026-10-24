@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 pub const SOCKET: &str = "ccdeck";
 pub const CLAUDE_WINDOW: &str = "claude";
 pub const SETUP_WINDOW: &str = "setup";
+pub const VERIFY_WINDOW: &str = "verify";
 
 const CONF: &str = r##"# Gerado pelo ccdeck — não edite; é recriado a cada abertura.
 set -g mouse on

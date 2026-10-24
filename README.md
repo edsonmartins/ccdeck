@@ -50,6 +50,7 @@ ccdeck            # abre a TUI
 | `m` | responder à sessão sem entrar |
 | `D` | diff completo da sessão (`diff_command`) |
 | `L` | linha do tempo da sessão (eventos, ações do ccdeck, compactações) |
+| `t` / `T` | roda o `verify` do `.ccdeck.json` no worktree / abre o log |
 | `h`/`l`, ←/→ | recolher/expandir projeto |
 | `Enter` | entrar na sessão (retoma se suspensa) |
 | `Ctrl-q` | dentro da sessão: voltar ao ccdeck |
@@ -71,6 +72,7 @@ Opcional, na raiz do repositório e versionado com o projeto (`ccdeck init-proje
 {
   "copy": [".env", "config/application-local.yml"],
   "setup": "npm ci",
+  "verify": "npm test",
   "env": { "SPRING_PROFILES_ACTIVE": "dev" },
   "ports": { "base": 8080, "step": 10, "vars": ["PORT", "SERVER_PORT"] }
 }
@@ -78,6 +80,7 @@ Opcional, na raiz do repositório e versionado com o projeto (`ccdeck init-proje
 
 - `copy`: arquivos ignorados pelo git copiados para o worktree novo.
 - `setup`: roda numa janela `setup` da sessão, em paralelo; o painel mostra rodando/ok/falhou.
+- `verify`: roda com `t` numa janela `verify` da sessão (sessão precisa estar viva); o painel mostra rodando/ok/falhou com a duração, avisa ao terminar e `T` abre o log.
 - `ports`: cada sessão ganha um slot (1, 2, 3…) e as variáveis valem `base + slot*step + i`. Duas sessões sobem a aplicação sem colidir.
 - `env`: variáveis extras. Tudo entra no ambiente do Claude Code e dos comandos que ele roda.
 
