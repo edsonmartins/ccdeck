@@ -13,6 +13,9 @@ pub struct Paths {
     pub config_file: PathBuf,
     pub state_file: PathBuf,
     pub state_dir: PathBuf,
+    /// `CCDECK_HOME` em uso, se houver. O hook roda no ambiente do servidor
+    /// tmux, que pode ter herdado outro valor; por isso vai fixo no comando.
+    pub home: Option<PathBuf>,
 }
 
 impl Paths {
@@ -30,6 +33,7 @@ impl Paths {
             config_file: dirs.config_dir().join("config.json"),
             state_file: dirs.data_dir().join("state.json"),
             state_dir,
+            home: None,
         })
     }
 
@@ -38,6 +42,7 @@ impl Paths {
             config_file: root.join("config.json"),
             state_file: root.join("state.json"),
             state_dir: root.join("state"),
+            home: Some(root.to_path_buf()),
         }
     }
 

@@ -251,7 +251,7 @@ fn clip(s: &str, max: usize) -> String {
 
 /// Gera o arquivo passado via `claude --settings`. Idempotente.
 pub fn write_settings(paths: &Paths, exe: &Path) -> Result<()> {
-    let command = format!("{} hook", shell_quote(&exe.to_string_lossy()));
+    let command = hook_command(paths, exe);
     let handler = json!([{ "hooks": [{ "type": "command", "command": command, "timeout": 5 }] }]);
     let mut hooks = serde_json::Map::new();
     for ev in EVENTS {
@@ -259,6 +259,20 @@ pub fn write_settings(paths: &Paths, exe: &Path) -> Result<()> {
     }
     let settings = json!({ "hooks": hooks });
     write_atomic(&paths.hooks_file(), &serde_json::to_vec_pretty(&settings)?)
+}
+
+/// Comando do hook. Fixa o `CCDECK_HOME` (ou o remove): as sessões herdam o
+/// ambiente do servidor `tmux -L ccdeck`, que pode ter sido criado por um
+/// ccdeck com outro `CCDECK_HOME` (validacao-v0.2.md §7).
+pub fn hook_command(paths: &Paths, exe: &Path) -> String {
+    let exe = shell_quote(&exe.to_string_lossy());
+    match &paths.home {
+        Some(home) => format!(
+            "CCDECK_HOME={} {exe} hook",
+            shell_quote(&home.to_string_lossy())
+        ),
+        None => format!("env -u CCDECK_HOME {exe} hook"),
+    }
 }
 
 /// Aspas simples POSIX.
@@ -324,7 +338,15 @@ mod tests {
         let v: Value = serde_json::from_slice(&std::fs::read(paths.hooks_file()).unwrap()).unwrap();
         assert_eq!(
             v["hooks"]["Stop"][0]["hooks"][0]["command"],
-            "'/opt/my apps/ccdeck' hook"
+            format!("CCDECK_HOME={} '/opt/my apps/ccdeck' hook", dir.display())
+        );
+        let sem_home = Paths {
+            home: None,
+            ..paths.clone()
+        };
+        assert_eq!(
+            hook_command(&sem_home, Path::new("/usr/bin/ccdeck")),
+            "env -u CCDECK_HOME /usr/bin/ccdeck hook"
         );
         assert_eq!(v["hooks"].as_object().unwrap().len(), EVENTS.len());
         std::fs::remove_dir_all(dir).ok();
