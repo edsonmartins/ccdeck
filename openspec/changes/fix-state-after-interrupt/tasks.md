@@ -10,5 +10,5 @@
 - [x] 2.4 Rótulo "padrão das suas settings" para o modo `default`
 
 ## 3. Verificação
-- [ ] 3.1 Testes de `record_local` (grava; não sobrescreve hook novo) e do aviso
-- [ ] 3.2 Fluxo real: `x` numa sessão real e `m` em seguida
+- [x] 3.1 Testes de `record_local` (grava; não sobrescreve hook novo) e do aviso
+- [x] 3.2 Fluxo real: `x` numa sessão real e `m` em seguida

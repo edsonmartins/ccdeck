@@ -76,10 +76,10 @@ Esc to cancel · Tab to amend
 - [confirmado] O Claude Code avisa `tmux focus-events off`. O servidor `-L ccdeck` agora liga `focus-events` no próprio `tmux.conf` (commit `fe5ce3c`).
 - [confirmado] Aviso de colisão funcionou com sessões reais: duas sessões criaram `aprovado.txt` e as duas ganharam `⚠`.
 
-## 8. Pendências que precisam de decisão
+## 8. Decisões tomadas depois da validação
 
-1. **Estado depois de recusa ou interrupção.** Não há hook que tire a sessão de *Aguardando aprovação* ou *Trabalhando*. Opções:
-   - (a) o ccdeck grava um status sintético (`Aguardando você`, evento `ccdeck · recusado`) logo depois de enviar `deny_keys`. Resolve o `x`, mas não o `Esc` dado dentro da sessão, e flexibiliza a invariante 2 ("estado vem exclusivamente de hooks").
-   - (b) depois do `attach` (Ctrl-q de volta), marcar como *Aguardando você* uma sessão que estava em aprovação ou trabalhando e que não recebeu evento novo. Também é estado fora dos hooks.
-   - (c) manter a invariante e só mostrar um aviso "sem eventos há N min — pode ter sido interrompida".
-2. **Rótulo do modo `default`.** Hoje significa "herdar o `defaultMode` do usuário". Opções: renomear na UI para "padrão das suas settings", ou passar `--permission-mode default` de forma explícita.
+1. **Estado depois de recusa ou interrupção** → ADR-0011 (invariante 2 passa a aceitar estado vindo de ações do próprio ccdeck; parsing de tela continua proibido). Change `fix-state-after-interrupt`.
+   - [confirmado] Depois do `x`, `status/<sid>.json` fica `{"status":"yours","event":"ccdeck · recusado","pending":null}`. O `m` enviado logo em seguida dispara `UserPromptSubmit` → `Stop` com `last_assistant_message: "ENTENDIDO"`, e a pasta pedida não foi criada.
+   - [confirmado] Depois da correção do §3, o `pending.id` do mesmo pedido é o `tool_use_id` real (`toolu_011Z…`).
+   - Interrupção com `Esc` dentro da sessão continua sem hook. O painel mostra "sem eventos há N min" em *Trabalhando* parado há 5 min ou mais (só aviso). [inferência] Não foi esperado o tempo do aviso em sessão real; coberto por teste unitário.
+2. **Modo `default`** → aparece na UI como "padrão das suas settings"; o comportamento (não passar `--permission-mode`) foi mantido.
