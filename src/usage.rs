@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::model::Price;
 use crate::paths::{Paths, write_atomic};
 
 /// Versão do formato de `state/usage/<sid>.json`. Versão diferente = reindexar.
@@ -286,6 +287,33 @@ pub fn remove(paths: &Paths, sid: &str) {
     let _ = std::fs::remove_file(paths.usage_file(sid));
 }
 
+/// Preço do modelo: vence o prefixo mais longo da tabela.
+pub fn price_for<'a>(prices: &'a BTreeMap<String, Price>, model: &str) -> Option<&'a Price> {
+    prices
+        .iter()
+        .filter(|(p, _)| model.starts_with(p.as_str()))
+        .max_by_key(|(p, _)| p.len())
+        .map(|(_, v)| v)
+}
+
+/// Custo equivalente em API (USD). `None` = modelo sem preço configurado.
+pub fn cost(prices: &BTreeMap<String, Price>, model: &str, t: &Tokens) -> Option<f64> {
+    let p = price_for(prices, model)?;
+    let m = 1_000_000.0;
+    Some(
+        t.input as f64 * p.input / m
+            + t.output as f64 * p.output / m
+            + t.cache_write_5m as f64 * p.cache_write_5m / m
+            + t.cache_write_1h as f64 * p.cache_write_1h / m
+            + t.cache_read as f64 * p.cache_read / m,
+    )
+}
+
+/// Modelo sem os sufixos internos (`+fast`, `+long`), para exibir.
+pub fn display_model(model: &str) -> &str {
+    model.split('+').next().unwrap_or(model)
+}
+
 // --- varredura em segundo plano -------------------------------------------
 
 pub struct Job {
@@ -503,5 +531,30 @@ mod tests {
         assert_eq!(total(&idx.hours).output, 20);
         assert_eq!(idx.files.len(), 2);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn custo_por_prefixo_mais_longo() {
+        let prices = crate::model::default_prices();
+        let t = Tokens {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_write_5m: 1_000_000,
+            cache_write_1h: 1_000_000,
+            cache_read: 1_000_000,
+            messages: 1,
+        };
+        // Opus 5.5: 4 + 20 + 5 + 8 + 0.20 (e não o preço do prefixo claude-opus-5).
+        let c = cost(&prices, "claude-opus-5-5", &t).unwrap();
+        assert!((c - 37.20).abs() < 1e-9, "{c}");
+        let c = cost(&prices, "claude-opus-5-5+long", &t).unwrap();
+        assert!((c - 37.20).abs() < 1e-9, "+long só muda o Haiku");
+        let c = cost(&prices, "claude-haiku-5-5+long", &t).unwrap();
+        assert!((c - (0.5 + 2.5 + 0.625 + 1.0 + 0.05)).abs() < 1e-9, "{c}");
+        assert!(cost(&prices, "modelo-novo", &t).is_none());
+        assert_eq!(
+            display_model("claude-opus-5-5+fast+long"),
+            "claude-opus-5-5"
+        );
     }
 }

@@ -11,9 +11,9 @@
 - [ ] 1.4 Tempo por estado (aprovação, sua vez, trabalhando) a partir do histórico
 
 ## 2. Custo
-- [ ] 2.1 `prices` no `config.json` com padrão da página oficial (data registrada)
-- [ ] 2.2 `cost_display`: `api` | `hidden`
-- [ ] 2.3 `ccdeck doctor` avisa modelos sem preço
+- [x] 2.1 `prices` no `config.json` com padrão da página oficial (data registrada)
+- [x] 2.2 `cost_display`: `api` | `hidden`
+- [x] 2.3 `ccdeck doctor` avisa modelos sem preço
 
 ## 3. UI
 - [ ] 3.1 `View::Summary` e `Tab` alternando Projetos → Atenção → Resumo

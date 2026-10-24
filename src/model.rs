@@ -1,5 +1,6 @@
 //! Modelo de domínio: projetos, sessões, estados e configuração.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -156,6 +157,59 @@ pub struct Config {
     pub deny_keys: Vec<String>,
     /// Comando do diff completo (`D`); `{base}` vira a base da sessão (ADR-0009).
     pub diff_command: String,
+    /// USD por milhão de tokens, por prefixo de id de modelo (ADR-0010).
+    pub prices: BTreeMap<String, Price>,
+    /// `api` mostra o custo equivalente em API; `hidden` esconde (assinatura).
+    pub cost_display: CostDisplay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostDisplay {
+    #[default]
+    Api,
+    Hidden,
+}
+
+/// Preço por milhão de tokens (USD).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Price {
+    pub input: f64,
+    pub output: f64,
+    pub cache_write_5m: f64,
+    pub cache_write_1h: f64,
+    pub cache_read: f64,
+}
+
+/// Tabela de `platform.claude.com/docs/en/about-claude/pricing`, lida em
+/// 2026-10-23. `+fast` = modo rápido (multiplicadores de cache por cima);
+/// `+long` = prompt acima de 100 mil tokens, que só muda o preço do Haiku 5.5.
+pub fn default_prices() -> BTreeMap<String, Price> {
+    let p = |input, output, cache_write_5m, cache_write_1h, cache_read| Price {
+        input,
+        output,
+        cache_write_5m,
+        cache_write_1h,
+        cache_read,
+    };
+    [
+        ("claude-fable-5-1", p(10.0, 50.0, 12.5, 20.0, 0.25)),
+        ("claude-mythos-5-1", p(10.0, 50.0, 12.5, 20.0, 0.25)),
+        ("claude-fable-5", p(10.0, 50.0, 12.5, 20.0, 1.0)),
+        ("claude-opus-5-5", p(4.0, 20.0, 5.0, 8.0, 0.20)),
+        ("claude-opus-5-5+fast", p(8.0, 40.0, 10.0, 16.0, 0.40)),
+        ("claude-opus-5", p(5.0, 25.0, 6.25, 10.0, 0.50)),
+        ("claude-opus-5+fast", p(10.0, 50.0, 12.5, 20.0, 1.0)),
+        ("claude-opus-4-8", p(5.0, 25.0, 6.25, 10.0, 0.50)),
+        ("claude-opus-4-8+fast", p(10.0, 50.0, 12.5, 20.0, 1.0)),
+        ("claude-sonnet-5-5", p(2.0, 10.0, 2.5, 4.0, 0.10)),
+        ("claude-sonnet-5", p(2.0, 10.0, 2.5, 4.0, 0.20)),
+        ("claude-haiku-5-5", p(0.10, 0.50, 0.125, 0.20, 0.01)),
+        ("claude-haiku-5-5+long", p(0.50, 2.50, 0.625, 1.0, 0.05)),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
 }
 
 impl Default for Config {
@@ -170,6 +224,8 @@ impl Default for Config {
             approve_keys: vec!["1".into()],
             deny_keys: vec!["Escape".into()],
             diff_command: "git diff {base}".into(),
+            prices: default_prices(),
+            cost_display: CostDisplay::Api,
         }
     }
 }

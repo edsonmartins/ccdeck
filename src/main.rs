@@ -169,8 +169,44 @@ fn doctor(paths: &Paths) -> Result<()> {
     println!("hooks   {}", paths.hooks_file().display());
     println!("status  {}", paths.status_dir().display());
     println!("tmux    tmux -L {} (sessões do deck)", tmux::SOCKET);
+    usage_report(paths, &cfg);
     if !missing.is_empty() {
         bail!("dependências faltando: {}", missing.join(", "));
     }
     Ok(())
+}
+
+/// Uso já indexado e modelos sem preço em `prices` (ADR-0010).
+fn usage_report(paths: &Paths, cfg: &model::Config) {
+    let Ok(state) = store::load_state(paths) else {
+        return;
+    };
+    let mut by_model: std::collections::BTreeMap<String, usage::Tokens> = Default::default();
+    for s in &state.sessions {
+        for models in usage::load(paths, &s.id).hours.values() {
+            for (m, t) in models {
+                by_model.entry(m.clone()).or_default().add(t);
+            }
+        }
+    }
+    if by_model.is_empty() {
+        return;
+    }
+    let mut total = 0.0;
+    let mut unpriced = std::collections::BTreeSet::new();
+    for (m, t) in &by_model {
+        match usage::cost(&cfg.prices, m, t) {
+            Some(c) => total += c,
+            None => {
+                unpriced.insert(usage::display_model(m).to_string());
+            }
+        }
+    }
+    println!();
+    if cfg.cost_display == model::CostDisplay::Api {
+        println!("uso     custo equivalente em API (sessões do ccdeck): US$ {total:.2}");
+    }
+    for m in unpriced {
+        println!("AVISO  modelo sem preço em config.json (prices): {m}");
+    }
 }
