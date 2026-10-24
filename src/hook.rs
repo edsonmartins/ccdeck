@@ -99,6 +99,38 @@ pub fn record(paths: &Paths, sid: &str, input: &Value) -> Result<()> {
     write_atomic(&file, &serde_json::to_vec(&rec)?)
 }
 
+/// Grava um estado vindo de uma ação do próprio ccdeck (ADR-0011), só se o
+/// status no disco ainda é o de `expected_at`: um hook que chegou no meio vence.
+/// Retorna se gravou.
+pub fn record_local(
+    paths: &Paths,
+    sid: &str,
+    expected_at: chrono::DateTime<Utc>,
+    status: Status,
+    event: &str,
+) -> Result<bool> {
+    let file = paths.status_file(sid);
+    let Some(prev) = std::fs::read(&file)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<StatusRecord>(&b).ok())
+    else {
+        return Ok(false);
+    };
+    if prev.at != expected_at {
+        return Ok(false);
+    }
+    let rec = StatusRecord {
+        status,
+        event: event.to_string(),
+        detail: None,
+        at: Utc::now(),
+        pending: None,
+        ..prev
+    };
+    write_atomic(&file, &serde_json::to_vec(&rec)?)?;
+    Ok(true)
+}
+
 /// Monta o novo registro carregando adiante o que o evento não traz (ADR-0007).
 pub fn merge(
     prev: Option<&StatusRecord>,
@@ -328,6 +360,41 @@ mod tests {
         assert_eq!(get().last_message.as_deref(), Some("Pronto. Abro o PR?"));
         ev(json!({"hook_event_name":"UserPromptSubmit"}));
         assert_eq!(get().last_message.as_deref(), Some("Pronto. Abro o PR?"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn registro_local_nao_sobrescreve_hook_novo() {
+        let dir = std::env::temp_dir().join(format!("ccdeck-local-{}", crate::model::short_id()));
+        let paths = Paths::rooted(&dir);
+        let get = || crate::store::load_status(&paths, "s").unwrap();
+        record(
+            &paths,
+            "s",
+            &json!({"hook_event_name":"PermissionRequest","tool_name":"Bash",
+                    "tool_input":{"command":"mkdir x"},"transcript_path":"/tmp/t.jsonl"}),
+        )
+        .unwrap();
+        let antes = get();
+
+        // Um hook chegou depois da leitura: o registro local não grava.
+        record(
+            &paths,
+            "s",
+            &json!({"hook_event_name":"Notification","notification_type":"permission_prompt"}),
+        )
+        .unwrap();
+        assert!(!record_local(&paths, "s", antes.at, Status::Yours, "ccdeck · recusado").unwrap());
+        assert_eq!(get().status, Status::Approval);
+
+        let atual = get();
+        assert!(record_local(&paths, "s", atual.at, Status::Yours, "ccdeck · recusado").unwrap());
+        let r = get();
+        assert_eq!(r.status, Status::Yours);
+        assert_eq!(r.event, "ccdeck · recusado");
+        assert!(r.pending.is_none());
+        assert_eq!(r.last_tool.unwrap().summary, "mkdir x");
+        assert_eq!(r.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
         std::fs::remove_dir_all(dir).ok();
     }
 

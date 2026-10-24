@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::changes::{self, Job, Scanner};
 use crate::git::{self, FileChange};
-use crate::hook::shell_quote;
+use crate::hook::{self, shell_quote};
 use crate::input::{FormOutcome, SessionForm, TextInput};
 use crate::model::{
     Config, PERMISSION_MODES, Project, Session, State, Status, StatusRecord, short_id, slugify,
@@ -446,6 +446,19 @@ impl App {
                     &format!("{}: {}", pending.tool, pending.summary),
                 );
                 self.seen_pending.remove(&pending.id);
+                // A recusa não dispara hook no Claude Code (ADR-0011).
+                if !approve {
+                    match hook::record_local(
+                        &self.paths,
+                        &s.id,
+                        rec.at,
+                        Status::Yours,
+                        "ccdeck · recusado",
+                    ) {
+                        Ok(_) => self.refresh(),
+                        Err(e) => self.error(format!("falha ao gravar o status: {e:#}")),
+                    }
+                }
                 self.info(format!(
                     "{}: {} enviado a {} ({})",
                     if approve { "Aprovado" } else { "Recusado" },
