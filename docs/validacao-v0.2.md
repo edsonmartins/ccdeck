@@ -74,6 +74,8 @@ Esc to cancel · Tab to amend
 - [confirmado] **Diálogo de confiança na pasta**: o primeiro worktree do repositório abriu "Is this a project you trust?". Antes da resposta nenhum hook dispara e a sessão fica em *Iniciando*. O painel agora sugere entrar na sessão (commit `a7ce1cd`).
   - [inferência] Os worktrees seguintes do mesmo repositório não abriram o diálogo; a confiança parece herdada pelo repositório git, não pela pasta.
 - [confirmado] O Claude Code avisa `tmux focus-events off`. O servidor `-L ccdeck` agora liga `focus-events` no próprio `tmux.conf` (commit `fe5ce3c`).
+- [confirmado] **`CCDECK_HOME` herdado do servidor tmux**: as sessões herdam o ambiente global do `tmux -L ccdeck`. Com duas instâncias de `CCDECK_HOME` diferentes, os hooks da segunda gravaram no diretório da primeira (`tmux show-environment -g CCDECK_HOME`). O comando no `hooks.json` agora fixa `CCDECK_HOME=<dir>` ou `env -u CCDECK_HOME` (commit `2c1be81`).
+- [confirmado] O `ccdeck hook` leva cerca de 5,7 ms por chamada (100 chamadas em 0,57 s, contando a criação do processo), sem saída e com exit 0, mesmo com o histórico de eventos.
 - [confirmado] Aviso de colisão funcionou com sessões reais: duas sessões criaram `aprovado.txt` e as duas ganharam `⚠`.
 
 ## 8. Decisões tomadas depois da validação
