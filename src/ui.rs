@@ -71,7 +71,11 @@ pub fn draw(f: &mut Frame, app: &App) {
     let [side, main] =
         Layout::horizontal([Constraint::Length(42), Constraint::Fill(1)]).areas(body);
     draw_sidebar(f, app, side);
-    draw_detail(f, app, main);
+    if app.view == View::Summary {
+        draw_summary(f, app, main);
+    } else {
+        draw_detail(f, app, main);
+    }
     draw_footer(f, app, footer);
     draw_modal(f, app);
 }
@@ -135,6 +139,8 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
                 app.view == View::Attention,
                 status_color(Status::Approval),
             ),
+            Span::raw(" "),
+            tab("Resumo".into(), app.view == View::Summary, accent()),
         ])),
         tabs,
     );
@@ -158,7 +164,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     if items.is_empty() {
         let msg = match app.view {
             View::Tree if app.state.projects.is_empty() => " Nenhum projeto. N cadastra um.",
-            View::Tree => " Nada encontrado.",
+            View::Tree | View::Summary => " Nada encontrado.",
             View::Attention => " Nenhuma sessão precisa de você.",
         };
         lines.push(Line::styled(msg, Style::new().fg(muted())));
@@ -318,9 +324,14 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         tr,
     );
 
-    let info_block = Block::bordered()
+    let mut info_block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(border()));
+    if let Some(line) = compact_usage(app, &s.id) {
+        info_block = info_block.title_bottom(
+            Line::styled(format!(" {line} "), Style::new().fg(muted())).right_aligned(),
+        );
+    }
     let ii = info_block.inner(info);
     f.render_widget(info_block, info);
     let ii = ii.inner(ratatui::layout::Margin {
@@ -698,6 +709,20 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         ]
     };
     let mut spans = Vec::new();
+    if app.view == View::Summary {
+        for (key, label) in [
+            ("Tab", "próxima aba"),
+            ("p", "período"),
+            ("/", "filtrar projeto/sessão"),
+            ("j/k", "sessão"),
+            ("?", "ajuda"),
+            ("q", "sair"),
+        ] {
+            spans.extend(k(key, label));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)).bg(panel()), area);
+        return;
+    }
     let sel_status = app.selected_session().map(|s| app.status_of(s));
     let mut keys: Vec<(&'static str, &'static str)> = vec![("Enter", "entrar")];
     match sel_status {
@@ -779,7 +804,9 @@ fn draw_modal(f: &mut Frame, app: &App) {
                 ("m", "responder sem entrar na sessão"),
                 ("D", "diff completo da sessão"),
                 ("n / N", "nova sessão / novo projeto"),
-                ("a ou Tab", "alternar visão Atenção"),
+                ("a", "alternar visão Atenção"),
+                ("Tab", "Projetos → Atenção → Resumo"),
+                ("p", "período do Resumo (hoje/7/30 dias)"),
                 ("/", "filtrar (Esc limpa)"),
                 ("e", "editar notas (Ctrl-s salva)"),
                 ("r", "renomear sessão"),
@@ -1074,4 +1101,431 @@ fn truncate(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max - 1).collect();
     out.push('…');
     out
+}
+
+// --- Resumo (ADR-0010) -------------------------------------------------------
+
+/// `1,2M`, `45,3k`, `812`.
+fn fmt_tokens(n: u64) -> String {
+    let f = |v: f64, suf: &str| format!("{v:.1}{suf}").replace('.', ",");
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => f(n as f64 / 1e3, "k"),
+        1_000_000..1_000_000_000 => f(n as f64 / 1e6, "M"),
+        _ => f(n as f64 / 1e9, "B"),
+    }
+}
+
+fn fmt_usd(c: &crate::summary::Cost) -> String {
+    let v = format!("US$ {:.2}", c.usd).replace('.', ",");
+    if c.unknown { format!("{v} + ?") } else { v }
+}
+
+fn fmt_dur(d: chrono::Duration) -> String {
+    let m = d.num_minutes();
+    match m {
+        ..1 => "0 min".into(),
+        1..60 => format!("{m} min"),
+        _ => format!("{} h {:02} min", m / 60, m % 60),
+    }
+}
+
+fn show_cost(app: &App) -> bool {
+    app.config.cost_display == crate::model::CostDisplay::Api
+}
+
+/// Linha do painel da sessão: tokens, custo e espera de hoje.
+fn compact_usage(app: &App, sid: &str) -> Option<String> {
+    let row = app
+        .summary_today
+        .as_ref()?
+        .rows
+        .iter()
+        .find(|r| r.session == sid)?;
+    let tok = row.tokens.prompt() + row.tokens.output;
+    if tok == 0 && row.waiting.num_minutes() == 0 {
+        return None;
+    }
+    let mut parts = vec![format!("hoje {} tokens", fmt_tokens(tok))];
+    if show_cost(app) {
+        parts.push(format!("{} (equiv. API)", fmt_usd(&row.cost)));
+    }
+    parts.push(format!("espera {}", fmt_dur(row.waiting)));
+    Some(parts.join(" · "))
+}
+
+fn tile(f: &mut Frame, area: Rect, label: &str, value: String, sub: String, color: Color) {
+    let block = rounded(border());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::styled(label.to_string(), Style::new().fg(muted())),
+            Line::styled(value, Style::new().fg(color).bold()),
+            Line::styled(sub, Style::new().fg(muted())),
+        ]),
+        inner,
+    );
+}
+
+fn draw_summary(f: &mut Frame, app: &App, area: Rect) {
+    use ratatui::symbols::Marker;
+    use ratatui::widgets::{
+        Axis, Bar, BarChart, BarGroup, Cell, Chart, Dataset, GraphType, Row, Table,
+    };
+
+    let area = area.inner(ratatui::layout::Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let Some(sm) = app.summary.as_ref() else {
+        f.render_widget(Paragraph::new("calculando…").fg(muted()), area);
+        return;
+    };
+    let cost_on = show_cost(app);
+    let [title, tiles, charts, table, bottom] = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(5),
+        Constraint::Length(11),
+        Constraint::Fill(1),
+        Constraint::Length(9),
+    ])
+    .areas(area);
+
+    let mut tl = vec![
+        Span::styled("Resumo", Style::new().fg(fg()).bold()),
+        Span::styled(
+            format!("  {}", sm.period.label()),
+            Style::new().fg(accent()).bold(),
+        ),
+    ];
+    if !app.filter.value.trim().is_empty() {
+        tl.push(Span::styled(
+            format!("  filtro: {}", app.filter.value.trim()),
+            Style::new().fg(muted()),
+        ));
+    }
+    if cost_on {
+        tl.push(Span::styled(
+            "  · custo = equivalente em API, não o valor pago na assinatura",
+            Style::new().fg(muted()),
+        ));
+    }
+    if app.usage.busy() {
+        tl.push(Span::styled("  · indexando…", Style::new().fg(muted())));
+    }
+    f.render_widget(Paragraph::new(Line::from(tl)), title);
+
+    // Blocos de números
+    let n = if cost_on { 6 } else { 5 };
+    let cells = Layout::horizontal(vec![Constraint::Ratio(1, n); n as usize])
+        .spacing(1)
+        .split(tiles);
+    let t = &sm.tokens;
+    let mut i = 0;
+    let mut next = || {
+        i += 1;
+        cells[i - 1]
+    };
+    tile(
+        f,
+        next(),
+        "Tokens",
+        fmt_tokens(t.prompt() + t.output),
+        format!("{} mensagens", t.messages),
+        fg(),
+    );
+    if cost_on {
+        let sub = if sm.unpriced.is_empty() {
+            "equivalente em API".to_string()
+        } else {
+            format!("? sem preço: {}", sm.unpriced.join(", "))
+        };
+        tile(f, next(), "Custo", fmt_usd(&sm.cost), sub, accent());
+    }
+    tile(
+        f,
+        next(),
+        "Cache",
+        sm.cache_rate()
+            .map(|r| format!("{:.0}% lido", r * 100.0))
+            .unwrap_or_else(|| "—".into()),
+        format!(
+            "esc. {} · lê {}",
+            fmt_tokens(t.cache_write()),
+            fmt_tokens(t.cache_read)
+        ),
+        fg(),
+    );
+    tile(
+        f,
+        next(),
+        "Entrada / saída",
+        format!("{} / {}", fmt_tokens(t.input), fmt_tokens(t.output)),
+        "sem cache".into(),
+        fg(),
+    );
+    tile(
+        f,
+        next(),
+        "Arquivos modificados",
+        sm.files.len().to_string(),
+        format!("em {} sessões", sm.rows.len()),
+        fg(),
+    );
+    tile(
+        f,
+        next(),
+        "Esperando você",
+        fmt_dur(sm.waiting),
+        "aprovação + sua vez".into(),
+        status_color(Status::Yours),
+    );
+
+    // Gráficos
+    let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)])
+        .spacing(1)
+        .areas(charts);
+    let unit = if sm.period.hourly() { "hora" } else { "dia" };
+    let block = rounded(border()).title(Span::styled(
+        format!(" Tokens por {unit} "),
+        Style::new().fg(fg()).bold(),
+    ));
+    let inner = block.inner(left);
+    f.render_widget(block, left);
+    let nb = sm.buckets.len().max(1) as u16;
+    let bar_w = (inner.width.saturating_sub(nb) / nb).max(1);
+    let bars: Vec<Bar> = sm
+        .buckets
+        .iter()
+        .map(|b| {
+            let label = if sm.period.hourly() {
+                b.start.format("%H").to_string()
+            } else {
+                b.start.format("%d").to_string()
+            };
+            Bar::default()
+                .value(b.tokens)
+                .text_value(String::new())
+                .label(Line::from(label))
+                .style(Style::new().fg(accent()))
+        })
+        .collect();
+    f.render_widget(
+        BarChart::default()
+            .data(BarGroup::default().bars(&bars))
+            .bar_width(bar_w)
+            .bar_gap(1)
+            .label_style(Style::new().fg(muted())),
+        inner,
+    );
+
+    let max_cost = sm.buckets.iter().map(|b| b.cost).fold(0.0, f64::max);
+    let max_msg = sm.buckets.iter().map(|b| b.messages).max().unwrap_or(0);
+    let norm = |v: f64, m: f64| if m > 0.0 { v / m } else { 0.0 };
+    let cost_pts: Vec<(f64, f64)> = sm
+        .buckets
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (i as f64, norm(b.cost, max_cost)))
+        .collect();
+    let msg_pts: Vec<(f64, f64)> = sm
+        .buckets
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (i as f64, norm(b.messages as f64, max_msg as f64)))
+        .collect();
+    let mut sets = vec![
+        Dataset::default()
+            .name(format!("mensagens (máx {max_msg}/{unit})"))
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::new().fg(status_color(Status::Yours)))
+            .data(&msg_pts),
+    ];
+    if cost_on {
+        sets.push(
+            Dataset::default()
+                .name(format!("custo (máx US$ {max_cost:.2}/{unit})").replace('.', ","))
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::new().fg(accent()))
+                .data(&cost_pts),
+        );
+    }
+    let title = if cost_on {
+        format!(" Custo e mensagens por {unit} (escala relativa) ")
+    } else {
+        format!(" Mensagens por {unit} (escala relativa) ")
+    };
+    let x_max = (sm.buckets.len().saturating_sub(1)).max(1) as f64;
+    let first = sm
+        .buckets
+        .first()
+        .map(|b| {
+            b.start
+                .format(if sm.period.hourly() { "%H:00" } else { "%d/%m" })
+                .to_string()
+        })
+        .unwrap_or_default();
+    let last = sm
+        .buckets
+        .last()
+        .map(|b| {
+            b.start
+                .format(if sm.period.hourly() { "%H:00" } else { "%d/%m" })
+                .to_string()
+        })
+        .unwrap_or_default();
+    f.render_widget(
+        Chart::new(sets)
+            .block(rounded(border()).title(Span::styled(title, Style::new().fg(fg()).bold())))
+            .x_axis(
+                Axis::default()
+                    .bounds([0.0, x_max])
+                    .labels([first, last])
+                    .style(Style::new().fg(muted())),
+            )
+            .y_axis(
+                Axis::default()
+                    .bounds([0.0, 1.05])
+                    .style(Style::new().fg(muted())),
+            )
+            .legend_position(Some(ratatui::widgets::LegendPosition::TopLeft))
+            .hidden_legend_constraints((Constraint::Percentage(100), Constraint::Percentage(100))),
+        right,
+    );
+
+    // Tabela por sessão
+    let mut header = vec!["Sessão", "Projeto", "Estado", "Tokens", "Cache"];
+    if cost_on {
+        header.push("Custo");
+    }
+    header.push("Espera");
+    let rows: Vec<Row> = sm
+        .rows
+        .iter()
+        .map(|r| {
+            let p = r.tokens.prompt();
+            let cache = if p > 0 {
+                format!("{:.0}%", r.tokens.cache_read as f64 * 100.0 / p as f64)
+            } else {
+                "—".into()
+            };
+            let mut cells = vec![
+                Cell::from(r.name.clone()),
+                Cell::from(r.project.clone()).style(Style::new().fg(muted())),
+                Cell::from(format!("{} {}", r.status.icon(), r.status.short()))
+                    .style(Style::new().fg(status_color(r.status))),
+                Cell::from(fmt_tokens(p + r.tokens.output)),
+                Cell::from(cache),
+            ];
+            if cost_on {
+                cells.push(Cell::from(fmt_usd(&r.cost)));
+            }
+            cells.push(Cell::from(fmt_dur(r.waiting)));
+            Row::new(cells)
+        })
+        .collect();
+    let mut widths = vec![
+        Constraint::Fill(2),
+        Constraint::Fill(1),
+        Constraint::Length(10),
+        Constraint::Length(8),
+        Constraint::Length(6),
+    ];
+    if cost_on {
+        widths.push(Constraint::Length(14));
+    }
+    widths.push(Constraint::Length(12));
+    f.render_widget(
+        Table::new(rows, widths)
+            .header(Row::new(header).style(Style::new().fg(muted()).bold()))
+            .column_spacing(2)
+            .block(
+                rounded(border()).title(Span::styled(" Por sessão ", Style::new().fg(fg()).bold())),
+            ),
+        table,
+    );
+
+    // Atividade recente | arquivos modificados
+    let [act, files] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)])
+        .spacing(1)
+        .areas(bottom);
+    let block = rounded(border()).title(Span::styled(
+        " Atividade recente ",
+        Style::new().fg(fg()).bold(),
+    ));
+    let inner = block.inner(act);
+    f.render_widget(block, act);
+    let lines: Vec<Line> = sm
+        .activity
+        .iter()
+        .take(inner.height as usize)
+        .map(|a| {
+            Line::from(vec![
+                Span::styled(
+                    a.at.with_timezone(&chrono::Local)
+                        .format("%d/%m %H:%M ")
+                        .to_string(),
+                    Style::new().fg(muted()),
+                ),
+                Span::styled(
+                    format!("{} ", a.status.icon()),
+                    Style::new().fg(status_color(a.status)),
+                ),
+                Span::styled(format!("{} ", a.session), Style::new().fg(fg())),
+                Span::styled(a.event.clone(), Style::new().fg(muted())),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
+
+    let block = rounded(border()).title(Span::styled(
+        " Arquivos modificados ",
+        Style::new().fg(fg()).bold(),
+    ));
+    let inner = block.inner(files);
+    f.render_widget(block, files);
+    let w = inner.width as usize;
+    let lines: Vec<Line> = sm
+        .files
+        .iter()
+        .take(inner.height as usize)
+        .map(|(path, sess, a, d)| {
+            let tail = format!(" +{a} −{d}  {sess}");
+            Line::from(vec![
+                Span::styled(
+                    truncate_left(path, w.saturating_sub(tail.chars().count())),
+                    Style::new().fg(fg()),
+                ),
+                Span::styled(format!(" +{a}"), Style::new().fg(added_color())),
+                Span::styled(
+                    format!(" −{d}"),
+                    Style::new().fg(status_color(Status::Error)),
+                ),
+                Span::styled(format!("  {sess}"), Style::new().fg(muted())),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formatos() {
+        assert_eq!(fmt_tokens(812), "812");
+        assert_eq!(fmt_tokens(45_300), "45,3k");
+        assert_eq!(fmt_tokens(1_250_000), "1,2M");
+        assert_eq!(fmt_dur(chrono::Duration::minutes(29)), "29 min");
+        assert_eq!(fmt_dur(chrono::Duration::minutes(192)), "3 h 12 min");
+        let c = crate::summary::Cost {
+            usd: 3.4,
+            unknown: true,
+        };
+        assert_eq!(fmt_usd(&c), "US$ 3,40 + ?");
+    }
 }

@@ -412,10 +412,9 @@ mod tests {
         assert!(r.pending.is_none());
         assert_eq!(r.last_tool.unwrap().summary, "mkdir x");
         assert_eq!(r.transcript_path.as_deref(), Some("/tmp/t.jsonl"));
-        let evs: Vec<String> = std::fs::read_to_string(paths.events_dir().join("s.jsonl"))
-            .unwrap()
-            .lines()
-            .map(|l| serde_json::from_str::<events::Event>(l).unwrap().event)
+        let evs: Vec<String> = events::load(&paths, "s")
+            .into_iter()
+            .map(|e| e.event)
             .collect();
         assert_eq!(
             evs,

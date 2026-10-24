@@ -11,6 +11,7 @@ mod notify;
 mod paths;
 mod project;
 mod store;
+mod summary;
 mod tmux;
 mod transcript;
 mod ui;

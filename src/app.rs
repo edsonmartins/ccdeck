@@ -21,6 +21,7 @@ use crate::notify;
 use crate::paths::Paths;
 use crate::project::{self, ProjectConfig};
 use crate::store;
+use crate::summary::{self, Period, Summary};
 use crate::tmux::{SETUP_WINDOW, Tmux};
 use crate::usage::{self, UsageScanner};
 
@@ -58,6 +59,8 @@ pub enum SetupState {
 pub enum View {
     Tree,
     Attention,
+    /// Aba Resumo (ADR-0010).
+    Summary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +107,11 @@ pub struct App {
     pub scanner: Scanner,
     /// Uso de tokens por sessão, indexado em segundo plano (ADR-0010).
     pub usage: UsageScanner,
+    pub period: Period,
+    /// Resumo do período escolhido e o de hoje (linha compacta do painel).
+    pub summary: Option<Summary>,
+    pub summary_today: Option<Summary>,
+    summary_at: Option<Instant>,
     /// Sessão → arquivo → outras sessões que alteraram o mesmo arquivo.
     pub collisions: HashMap<String, BTreeMap<String, Vec<String>>>,
     /// id do pedido → quando apareceu na tela pela primeira vez.
@@ -138,6 +146,10 @@ impl App {
             pending_shell: None,
             scanner: Scanner::default(),
             usage: UsageScanner::default(),
+            period: Period::Today,
+            summary: None,
+            summary_today: None,
+            summary_at: None,
             collisions: HashMap::new(),
             seen_pending: HashMap::new(),
             msg_cache: HashMap::new(),
@@ -194,7 +206,7 @@ impl App {
     pub fn items(&self) -> Vec<Item> {
         let mut out = Vec::new();
         match self.view {
-            View::Tree => {
+            View::Tree | View::Summary => {
                 let filtering = !self.filter.value.trim().is_empty();
                 for (pi, p) in self.state.projects.iter().enumerate() {
                     let sessions: Vec<usize> = self
@@ -259,6 +271,7 @@ impl App {
         self.update_preview();
         self.update_changes();
         self.update_usage();
+        self.update_summary();
         self.mark_seen_pending();
         self.update_last_message();
         if let Some(f) = &self.flash
@@ -276,9 +289,92 @@ impl App {
         }
     }
 
+    /// Recalcula o Resumo a cada 2 s (ou já, se `summary_at` foi zerado).
+    fn update_summary(&mut self) {
+        if self
+            .summary_at
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.summary_at = Some(Instant::now());
+        let events: HashMap<String, Vec<crate::events::Event>> = self
+            .state
+            .sessions
+            .iter()
+            .map(|s| (s.id.clone(), crate::events::load(&self.paths, &s.id)))
+            .collect();
+        let sessions = self
+            .state
+            .sessions
+            .iter()
+            .filter(|s| self.matches_filter(s))
+            .map(|s| {
+                let proj = self
+                    .project(&s.project_id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("");
+                (
+                    s,
+                    proj,
+                    self.status_of(s),
+                    self.alive.contains(&s.tmux_name()),
+                )
+            })
+            .collect();
+        let input = summary::Input {
+            sessions,
+            hours: &self.usage.hours,
+            events: &events,
+            changes: &self.scanner.results,
+            prices: &self.config.prices,
+        };
+        let now = Utc::now();
+        let today = summary::compute(&input, Period::Today, now);
+        let period = if self.period == Period::Today {
+            today.clone()
+        } else {
+            summary::compute(&input, self.period, now)
+        };
+        // A linha compacta ignora o filtro: recalcula sem ele se preciso.
+        let today_all = if self.filter.value.trim().is_empty() {
+            today
+        } else {
+            let all = self
+                .state
+                .sessions
+                .iter()
+                .map(|s| {
+                    let proj = self
+                        .project(&s.project_id)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("");
+                    (
+                        s,
+                        proj,
+                        self.status_of(s),
+                        self.alive.contains(&s.tmux_name()),
+                    )
+                })
+                .collect();
+            summary::compute(
+                &summary::Input {
+                    sessions: all,
+                    ..input
+                },
+                Period::Today,
+                now,
+            )
+        };
+        self.summary = Some(period);
+        self.summary_today = Some(today_all);
+    }
+
     /// Agenda a indexação de uso de todas as sessões (ADR-0010).
     fn update_usage(&mut self) {
-        self.usage.collect();
+        if self.usage.collect() {
+            self.summary_at = None;
+        }
         for s in &self.state.sessions {
             if let Some(t) = self
                 .runtime
@@ -1098,6 +1194,7 @@ impl App {
                 _ => {
                     self.filter.handle(key);
                     self.cursor = 0;
+                    self.summary_at = None;
                     Modal::Filter
                 }
             },
@@ -1218,13 +1315,27 @@ impl App {
                     .unwrap_or_default();
                 self.modal = Modal::NewProject(TextInput::new(cwd));
             }
-            KeyCode::Char('a') | KeyCode::Tab => {
-                self.view = if self.view == View::Tree {
-                    View::Attention
-                } else {
+            KeyCode::Char('a') => {
+                self.view = if self.view == View::Attention {
                     View::Tree
+                } else {
+                    View::Attention
                 };
                 self.cursor = 0;
+            }
+            // Projetos → Atenção → Resumo (ADR-0010).
+            KeyCode::Tab => {
+                self.view = match self.view {
+                    View::Tree => View::Attention,
+                    View::Attention => View::Summary,
+                    View::Summary => View::Tree,
+                };
+                self.cursor = 0;
+                self.summary_at = None;
+            }
+            KeyCode::Char('p') if self.view == View::Summary => {
+                self.period = self.period.next();
+                self.summary_at = None;
             }
             KeyCode::Char('e') => {
                 if let Some(s) = self.selected_session() {
